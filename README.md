@@ -6,11 +6,7 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 
 ## Showcase
 
-<video controls autoplay width="100%" src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.mp4">
-  <a href="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.mp4">Watch the one-minute feature showcase</a>
-</video>
-
-If playback speed controls are available in your video player, open the player’s settings and select **1.5×**. Markdown cannot set a video’s playback rate, so the available speed options depend on the host player.
+![Thymeleaf Integration feature showcase](https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.gif)
 
 ## Features
 
