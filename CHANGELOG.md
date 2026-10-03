@@ -19,4 +19,3 @@ All notable changes to this project are documented in this file.
 
 - Java model and Spring handler association uses source analysis and does not cover all runtime behavior or the full SpEL language.
 - Compiler-backed type enrichment requires the `redhat.java` language server in standard mode.
-- This release does not include a marketplace icon.

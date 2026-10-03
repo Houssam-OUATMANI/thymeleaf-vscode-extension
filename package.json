@@ -7,6 +7,7 @@
     "redhat.java"
   ],
   "publisher": "houssam-ouatmani",
+  "icon": "icon.png",
   "license": "MIT",
   "homepage": "https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension#readme",
   "repository": {
@@ -38,6 +39,7 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "icon.png",
     "snippets/**",
     "syntaxes/**"
   ],
