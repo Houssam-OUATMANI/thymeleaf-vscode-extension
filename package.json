@@ -1,12 +1,21 @@
 {
   "name": "thymeleaf-integration",
   "displayName": "Thymeleaf Integration",
-  "description": "Thymeleaf editing support for Visual Studio Code.",
-  "version": "0.1.1",
+  "description": "The missing Thymeleaf extension for Spring Boot apps.",
+  "version": "0.1.0",
   "extensionDependencies": [
     "redhat.java"
   ],
-  "publisher": "thymeleaf-tools",
+  "publisher": "houssam-ouatmani",
+  "license": "MIT",
+  "homepage": "https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -16,13 +25,19 @@
   ],
   "keywords": [
     "thymeleaf",
+    "thymeleaf-language-server",
     "spring",
+    "spring-boot",
+    "java",
+    "jdtls",
     "html",
     "templates"
   ],
   "files": [
     "dist/**",
     "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
     "snippets/**",
     "syntaxes/**"
   ],

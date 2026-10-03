@@ -1,0 +1,22 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+## [0.1.0] - 2026-10-03
+
+### Added
+
+- Thymeleaf-aware completion, syntax highlighting, snippets, hover information, and semantic coloring in HTML templates.
+- Java and Thymeleaf navigation for model attributes and properties, Spring routes, view names, templates, and fragments.
+- Diagnostics for malformed expressions, unknown attributes, unresolved model properties, missing routes, templates, fragments, and message keys.
+- Quick fixes for unclosed expressions and common Thymeleaf attribute and model-property misspellings.
+- Java model indexing for common Spring MVC controllers, `Model.addAttribute`, `@ModelAttribute`, Java fields, getters, records, and common generic collection types.
+- JDTLS integration for Java project classpath and external type symbol resolution.
+- Coordinated rename edits for supported Java model properties and their Thymeleaf references.
+- Configurable template locations and validation settings.
+
+### Notes
+
+- Java model and Spring handler association uses source analysis and does not cover all runtime behavior or the full SpEL language.
+- Compiler-backed type enrichment requires the `redhat.java` language server in standard mode.
+- This release does not include a marketplace icon.

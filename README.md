@@ -1,55 +1,52 @@
 # Thymeleaf Integration for VS Code
 
-Thymeleaf editing support for Visual Studio Code, powered by a dedicated Language Server Protocol (LSP) server.
+**The missing Thymeleaf extension for Spring Boot apps.**
+
+Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed completion, navigation, diagnostics, and refactoring in Visual Studio Code.
 
 ## Features
 
-- Prioritized Thymeleaf-aware completion for attributes, expressions, model properties, `th:each` variables, templates, fragments, and controller routes, including on manual completion requests.
-- Go to Definition between Java model attributes/properties and their Thymeleaf expressions.
-- Rename Java model fields/record components together with compiler-resolved Java references and exact Thymeleaf property occurrences.
-- Go to Definition between controller routes and Thymeleaf links.
-- Go to Definition between controller view names and template files.
-- Go to Definition between fragment references and fragment declarations.
-- Diagnostics for malformed expressions, unknown attributes, missing templates/fragments/routes, and resolvable model properties.
-- Quick fixes for missing closing braces and common misspellings of Thymeleaf attributes.
-- Hover information and references for indexed model properties and routes.
-- Thymeleaf syntax highlighting injected into VS Code's HTML grammar, with semantic coloring for model properties and methods resolved from Java model types.
-- Thymeleaf snippets as an optional editing convenience.
-
-## Project structure
-
-```text
-src/
-  client/extension.ts           VS Code Language Client startup and document sync
-  server/server.ts              LSP lifecycle, indexing, and protocol handlers
-  server/projectIndex.ts        Project-wide template, controller, and model index
-  server/javaIndexer.ts         Spring route and Java model source indexing
-  server/features/              Separate LSP completion, navigation, diagnostics, and shared helpers
-  thymeleaf/                    Thymeleaf attribute metadata and expression analysis
-  test/                         Node.js unit tests
-syntaxes/                       TextMate grammar injections
-snippets/                       Thymeleaf editor snippets
-.vscode/                        Extension Development Host and build task
-```
-
-The VS Code client is intentionally thin. Project analysis and editor features live in the LSP server so they can be tested independently and extended without coupling parsing to VS Code APIs.
+- Prioritized completion for Thymeleaf attributes, expressions, model properties, `th:each` variables, templates, fragments, and controller routes.
+- Go to Definition between Thymeleaf expressions and Java model properties, controller routes, view names, templates, and fragments.
+- Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
+- Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
+- Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
+- Hover information, references, and semantic coloring for resolved Java-backed model properties and methods.
+- Thymeleaf syntax highlighting and optional snippets in HTML files.
 
 ## Requirements
 
-Open a workspace folder containing Thymeleaf templates. Spring Boot's conventional template directory is indexed by default. The extension depends on `redhat.java` for JDTLS-backed Java symbol and classpath resolution; if its compiler API is unavailable, existing source-based features continue in a logged source-only fallback mode.
+- Visual Studio Code `1.85.0` or later.
+- A Java project using Spring MVC / Spring Boot.
+- The [Extension Pack for Java](https://marketplace.visualstudio.com/items?itemName=vscjava.vscode-java-pack), which provides the required `redhat.java` language server.
+
+The Java language server's standard mode provides compiler and classpath-backed symbol resolution. If that API is unavailable, source-based Thymeleaf support remains available and the fallback is reported in the **Thymeleaf Java Integration** output channel.
+
+## Getting started
+
+1. Install **Thymeleaf Integration** and the Extension Pack for Java.
+2. Open your Spring Boot workspace in VS Code.
+3. Open an HTML template under `src/main/resources/templates`.
+4. Use completion, Go to Definition, diagnostics, or Rename as you edit.
+
+Thymeleaf template paths are relative to the configured template directories and omit the `.html` extension. For example, `~{fragments/header :: navigation}` resolves to `fragments/header.html`.
 
 ## Settings
 
 | Setting | Default | Description |
 | --- | --- | --- |
 | `thymeleaf.templateLocations` | `["src/main/resources/templates"]` | Template directories relative to each workspace folder. |
-| `thymeleaf.validation.unclosedExpressions` | `true` | Report malformed or unclosed Thymeleaf expressions in `th:*` attributes. |
+| `thymeleaf.validation.unclosedExpressions` | `true` | Report malformed or unclosed Thymeleaf expressions. |
 | `thymeleaf.validation.unknownAttributes` | `true` | Report unknown Thymeleaf attributes and suggest close matches. |
-| `thymeleaf.validation.unknownModelProperties` | `true` | Check properties when the model type can be resolved from indexed Java sources. |
+| `thymeleaf.validation.unknownModelProperties` | `true` | Check properties when the model type can be resolved from Java sources. |
 
-Template names in Thymeleaf expressions are resolved relative to each configured template directory and omit the `.html` extension. For example, `~{fragments/header :: navigation}` resolves to `fragments/header.html`.
+## Java and Spring support
 
-The server watches Java and HTML file changes and rebuilds its project index automatically. Template locations can be configured in settings.
+The extension indexes common Spring MVC `@Controller` and `@RestController` mappings, static view-name returns, model values supplied through `Model.addAttribute`, `@ModelAttribute`, and Java fields, getters, and record components. It follows common collection types and simple generic types, including nested controller types.
+
+With the Java language server active, external Java types are resolved through JDTLS definitions and document symbols against the imported project's classpath. Those symbols can contribute to completion, diagnostics, navigation, and semantic coloring. Rename combines Java references from the Java language server with resolved Thymeleaf property references.
+
+The Spring handler and model association still uses source-based analysis. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, inherited dependency members, dynamic mappings, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type.
 
 ## Development
 
@@ -58,9 +55,14 @@ npm install
 npm test
 ```
 
-Press F5 in VS Code to launch the Extension Development Host.
-`npm run compile` type-checks the sources and bundles the LSP client and server. `npm run watch` rebuilds the bundles as you edit.
+Press `F5` in VS Code to launch the Extension Development Host. `npm run compile` type-checks and bundles the extension; `npm run watch` rebuilds the bundles while editing.
 
-## Current scope
+## License
 
-The semantic index recognizes common Spring MVC `@Controller` / `@RestController` handlers using `@RequestMapping` and the composed HTTP mapping annotations, static view-name returns, model values supplied through `Model.addAttribute` (including constructor expressions, local variables, and simple service method calls), `@ModelAttribute`, and Java fields/getters/record components, including nested types. Spring infrastructure and scalar handler parameters are not treated as view-model attributes. When multiple handlers serve the same view with incompatible types for an attribute, that attribute is left unresolved rather than assigned an arbitrary type. With the Java extension's standard language server active, unresolved source type references are resolved through JDTLS definitions and document symbols using the project's actual runtime classpath; those dependency symbols feed completion, diagnostics, navigation, semantic coloring, and basic generic type-argument substitution. Rename combines JDTLS Java references with precisely ranged Thymeleaf property references. The source parser still indexes Spring handler/model wiring and serves as a fallback; this is not yet a full replacement of the Java compiler's semantic model for all Java syntax, generic bounds/substitution, inherited dependency members, or SpEL. Dynamic Spring mappings and complex SpEL remain future work.
+This project is licensed under the [MIT License](./LICENSE).
+
+## Links
+
+- [Source code](https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension)
+- [Issues and feature requests](https://github.com/Houssam-OUATMANI/thymeleaf-vscode-extension/issues)
+- [Changelog](./CHANGELOG.md)
