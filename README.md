@@ -42,7 +42,7 @@ Thymeleaf template paths are relative to the configured template directories and
 
 ## Java and Spring support
 
-The extension indexes common Spring MVC `@Controller` and `@RestController` mappings, static view-name returns, model values supplied through `Model.addAttribute`, `@ModelAttribute`, and Java fields, getters, and record components. It follows common collection types and simple generic types, including nested controller types.
+The extension indexes common Spring MVC `@Controller` and `@RestController` mappings, static view-name returns, model values supplied through `Model.addAttribute`, `@ModelAttribute`, and Java fields, getters, and record components. It follows common collection types and simple generic types, including nested controller types. A `th:each` variable is available throughout its element, including in attributes written before `th:each` in the same opening tag.
 
 With the Java language server active, external Java types are resolved through JDTLS definitions and document symbols against the imported project's classpath. Those symbols can contribute to completion, diagnostics, navigation, and semantic coloring. Rename combines Java references from the Java language server with resolved Thymeleaf property references.
 

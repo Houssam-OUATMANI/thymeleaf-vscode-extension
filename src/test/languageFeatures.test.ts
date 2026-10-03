@@ -22,6 +22,7 @@ import {
   prepareThymeleafRename,
   provideThymeleafRenameEdits
 } from "../server/features/navigationProvider";
+import { findEnclosingLoopVariables } from "../server/features/featureUtils";
 import { ProjectIndex } from "../server/projectIndex";
 
 test("navigates from a Thymeleaf model property to its Java declaration", async () => {
@@ -394,6 +395,85 @@ test("completes and navigates collection loop variables back to their Java model
     ));
   } finally {
     await fixture.dispose();
+  }
+});
+
+test("resolves th:each variables in earlier attributes on the same HTML element", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-loop-attribute-order-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "options.html");
+  const template = `<select>
+  <option th:selected="\${s.id == filter}" th:value="\${s.id}" th:text="\${s.name}" th:each="s : \${status}"></option>
+</select>`;
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, template),
+      writeFile(path.join(java, "Status.java"), `package demo;
+class Status {
+  private UUID id;
+  private String name;
+}`),
+      writeFile(path.join(java, "StatusController.java"), `package demo;
+@Controller class StatusController {
+  @GetMapping("/options")
+  String options(UUID filter, Model model) {
+    List<Status> statuses = null;
+    model.addAttribute("status", statuses);
+    return "options";
+  }
+}`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+    const completionTemplate = template.replace("s.id", "s.");
+    const completionDocument = TextDocument.create(
+      pathToFileURL(templatePath).toString(),
+      "html",
+      1,
+      completionTemplate
+    );
+    const completionOffset = completionTemplate.indexOf("s.") + "s.".length;
+    assert.deepEqual(
+      findEnclosingLoopVariables(
+        completionTemplate,
+        completionOffset,
+        index.modelAttributesForTemplate("options"),
+        index
+      ).map(({ name, typeName }) => ({ name, typeName })),
+      [{ name: "s", typeName: "Status" }]
+    );
+    const completions = provideCompletions(
+      completionDocument,
+      completionDocument.positionAt(completionOffset),
+      index
+    );
+    assert.ok(completions.some(({ label }) => label === "id"));
+    assert.ok(completions.some(({ label }) => label === "name"));
+
+    const diagnostics = validateDocument(document, index, DEFAULT_SETTINGS);
+    assert.deepEqual(
+      diagnostics.filter(({ code }) => code === "unknown-model-property"),
+      []
+    );
+
+    const definitions = provideDefinition(
+      document,
+      document.positionAt(template.indexOf("s.name") + 2),
+      index
+    );
+    assert.ok(definitions);
+    assert.equal(definitions.uri, pathToFileURL(path.join(java, "Status.java")).toString());
+    assert.equal(definitions.range.start.line, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

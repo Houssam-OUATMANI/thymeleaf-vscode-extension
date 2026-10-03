@@ -38,7 +38,7 @@ export function findEnclosingLoopVariables(
 ): LoopVariableInfo[] {
   const variables: LoopVariableInfo[] = [];
   for (const attribute of findThymeleafAttributes(text)) {
-    if (attribute.name !== "th:each" || attribute.nameStart > offset) continue;
+    if (attribute.name !== "th:each") continue;
     if (!isOffsetInsideElement(text, attribute.nameStart, offset)) continue;
     const iteration = /^\s*([\w$]+)\s*(?:,\s*([\w$]+)\s*)?:\s*([\s\S]+)$/.exec(attribute.value);
     if (!iteration) continue;
@@ -373,7 +373,7 @@ export function escapeRegExp(value: string): string {
 
 function isOffsetInsideElement(text: string, elementStart: number, offset: number): boolean {
   const tagStart = text.lastIndexOf("<", elementStart);
-  if (tagStart < 0) return false;
+  if (tagStart < 0 || offset < tagStart) return false;
   const openingTag = text.slice(tagStart, text.indexOf(">", tagStart) + 1);
   const tagName = /^<\s*([\w:-]+)/.exec(openingTag)?.[1];
   if (!tagName || /\/\s*>$/.test(openingTag)) {
