@@ -1,0 +1,79 @@
+{
+  "Thymeleaf namespace": {
+    "prefix": "thxmlns",
+    "body": [
+      "xmlns:th=\"http://www.thymeleaf.org\""
+    ],
+    "description": "Declare the Thymeleaf XML namespace."
+  },
+  "Thymeleaf text": {
+    "prefix": "thtext",
+    "body": [
+      "th:text=\"\\${1:message}\""
+    ],
+    "description": "Render an escaped Thymeleaf expression."
+  },
+  "Thymeleaf conditional": {
+    "prefix": "thif",
+    "body": [
+      "th:if=\"\\${1:condition}\""
+    ],
+    "description": "Conditionally render an element."
+  },
+  "Thymeleaf iteration": {
+    "prefix": "theach",
+    "body": [
+      "th:each=\"\\${1:item} : \\${2:\\${items}}\""
+    ],
+    "description": "Repeat an element for each item in a collection."
+  },
+  "Thymeleaf link": {
+    "prefix": "thhref",
+    "body": [
+      "th:href=\"@{\\${1:/path}}\""
+    ],
+    "description": "Create a context-aware link."
+  },
+  "Thymeleaf form field": {
+    "prefix": "thfield",
+    "body": [
+      "th:field=\"*{\\${1:property}}\""
+    ],
+    "description": "Bind a form field to the selected form object."
+  },
+  "Thymeleaf fragment insertion": {
+    "prefix": "threplace",
+    "body": [
+      "th:replace=\"~{\\${1:fragments/name} :: \\${2:fragment}}\""
+    ],
+    "description": "Replace an element with a template fragment."
+  },
+  "Thymeleaf text expression": {
+    "prefix": "th-exp",
+    "body": [
+      "\\${$1}"
+    ],
+    "description": "Insert a variable expression."
+  },
+  "Thymeleaf selection expression": {
+    "prefix": "th-select",
+    "body": [
+      "*{$1}"
+    ],
+    "description": "Insert a selection expression."
+  },
+  "Thymeleaf message expression": {
+    "prefix": "th-message",
+    "body": [
+      "#{$1}"
+    ],
+    "description": "Insert a message expression."
+  },
+  "Thymeleaf URL expression": {
+    "prefix": "th-url",
+    "body": [
+      "@{$1}"
+    ],
+    "description": "Insert a URL expression."
+  }
+}

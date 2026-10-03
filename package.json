@@ -1,0 +1,97 @@
+{
+  "name": "thymeleaf-integration",
+  "displayName": "Thymeleaf Integration",
+  "description": "Thymeleaf editing support for Visual Studio Code.",
+  "version": "0.1.1",
+  "extensionDependencies": [
+    "redhat.java"
+  ],
+  "publisher": "thymeleaf-tools",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "thymeleaf",
+    "spring",
+    "html",
+    "templates"
+  ],
+  "files": [
+    "dist/**",
+    "README.md",
+    "snippets/**",
+    "syntaxes/**"
+  ],
+  "activationEvents": [
+    "onLanguage:html",
+    "onLanguage:java",
+    "workspaceContains:**/src/main/resources/templates/**/*.html"
+  ],
+  "main": "./dist/client.js",
+  "contributes": {
+    "configuration": {
+      "title": "Thymeleaf",
+      "properties": {
+        "thymeleaf.templateLocations": {
+          "type": "array",
+          "default": [
+            "src/main/resources/templates"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Template directories relative to each workspace folder."
+        },
+        "thymeleaf.validation.unclosedExpressions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report malformed Thymeleaf expressions."
+        },
+        "thymeleaf.validation.unknownAttributes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report unknown Thymeleaf attributes."
+        },
+        "thymeleaf.validation.unknownModelProperties": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report model properties that cannot be resolved from indexed controller and Java sources."
+        }
+      }
+    },
+    "grammars": [
+      {
+        "scopeName": "source.thymeleaf.injection",
+        "path": "./syntaxes/thymeleaf.injection.tmLanguage.json",
+        "injectTo": [
+          "text.html.basic"
+        ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "html",
+        "path": "./snippets/thymeleaf.code-snippets"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p . && node esbuild.config.cjs",
+    "watch": "node esbuild.config.cjs --watch",
+    "test": "npm run compile && node --test out/test/**/*.test.js",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.3",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  }
+}

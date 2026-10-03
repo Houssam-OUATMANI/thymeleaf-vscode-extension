@@ -1,0 +1,79 @@
+{
+  "scopeName": "source.thymeleaf.injection",
+  "injectionSelector": "L:text.html.basic - comment, L:string.quoted.double.html - comment, L:string.quoted.single.html - comment",
+  "patterns": [
+    {
+      "name": "entity.other.attribute-name.thymeleaf.html",
+      "match": "\\b(?:th|sec|layout):[a-zA-Z][\\w-]*(?=\\s*=)"
+    },
+    {
+      "name": "meta.embedded.inline.thymeleaf",
+      "begin": "(\\[\\[|\\[\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.inline.begin.thymeleaf"
+        }
+      },
+      "end": "(\\]\\]|\\)\\])",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.inline.end.thymeleaf"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    {
+      "include": "#expression"
+    }
+  ],
+  "repository": {
+    "expression": {
+      "name": "meta.embedded.expression.thymeleaf",
+      "begin": "(\\$|\\*|#|@|~)(\\{)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.expression.begin.thymeleaf"
+        },
+        "2": {
+          "name": "punctuation.section.embedded.begin.thymeleaf"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.embedded.end.thymeleaf"
+        }
+      },
+      "patterns": [
+        {
+          "name": "string.quoted.single.thymeleaf",
+          "match": "'(?:\\\\.|[^'\\\\])*'"
+        },
+        {
+          "name": "string.quoted.double.thymeleaf",
+          "match": "\"(?:\\\\.|[^\"\\\\])*\""
+        },
+        {
+          "name": "constant.language.thymeleaf",
+          "match": "\\b(?:null|true|false)\\b"
+        },
+        {
+          "name": "constant.numeric.thymeleaf",
+          "match": "\\b\\d+(?:\\.\\d+)?\\b"
+        },
+        {
+          "name": "keyword.operator.thymeleaf",
+          "match": "(?:==|!=|>=|<=|\\?:|\\?\\.|\\?|:|!|\\+|-|\\*|/|%|>|<|\\b(?:and|or|not|eq|ne|lt|gt|le|ge|div|mod|instanceof)\\b)"
+        },
+        {
+          "name": "variable.other.thymeleaf",
+          "match": "\\b[A-Za-z_$][\\w$]*\\b"
+        }
+      ]
+    }
+  }
+}
