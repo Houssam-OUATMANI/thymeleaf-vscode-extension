@@ -4,6 +4,14 @@
 
 Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed completion, navigation, diagnostics, and refactoring in Visual Studio Code.
 
+## Showcase
+
+<video controls autoplay width="100%" src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.mp4">
+  <a href="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.mp4">Watch the one-minute feature showcase</a>
+</video>
+
+If playback speed controls are available in your video player, open the player’s settings and select **1.5×**. Markdown cannot set a video’s playback rate, so the available speed options depend on the host player.
+
 ## Features
 
 - Prioritized completion for Thymeleaf attributes, expressions, model properties, `th:each` variables, templates, fragments, and controller routes.
