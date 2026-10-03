@@ -1,4 +1,4 @@
-# Thymeleaf Integration for VS Code
+# Thymeleaf Companion for VS Code
 
 **The missing Thymeleaf extension for Spring Boot apps.**
 
@@ -6,7 +6,7 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 
 ## Showcase
 
-![Thymeleaf Integration feature showcase](https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.gif)
+![Thymeleaf Companion feature showcase](https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.gif)
 
 ## Features
 
@@ -24,11 +24,11 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 - A Java project using Spring MVC / Spring Boot.
 - The [Extension Pack for Java](https://marketplace.visualstudio.com/items?itemName=vscjava.vscode-java-pack), which provides the required `redhat.java` language server.
 
-The Java language server's standard mode provides compiler and classpath-backed symbol resolution. If that API is unavailable, source-based Thymeleaf support remains available and the fallback is reported in the **Thymeleaf Java Integration** output channel.
+The Java language server's standard mode provides compiler and classpath-backed symbol resolution. If that API is unavailable, source-based Thymeleaf support remains available and the fallback is reported in the **Thymeleaf Companion: Java** output channel.
 
 ## Getting started
 
-1. Install **Thymeleaf Integration** and the Extension Pack for Java.
+1. Install **Thymeleaf Companion** and the Extension Pack for Java.
 2. Open your Spring Boot workspace in VS Code.
 3. Open an HTML template under `src/main/resources/templates`.
 4. Use completion, Go to Definition, diagnostics, or Rename as you edit.

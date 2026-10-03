@@ -33,7 +33,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     outputChannelName: "Thymeleaf Language Server"
   };
-  const outputChannel = vscode.window.createOutputChannel("Thymeleaf Java Integration");
+  const outputChannel = vscode.window.createOutputChannel("Thymeleaf Companion: Java");
 
   languageClient = new LanguageClient(
     "thymeleafLanguageServer",

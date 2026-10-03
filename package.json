@@ -1,6 +1,6 @@
 {
-  "name": "thymeleaf-integration",
-  "displayName": "Thymeleaf Integration",
+  "name": "thymeleaf-companion",
+  "displayName": "Thymeleaf Companion",
   "description": "The missing Thymeleaf extension for Spring Boot apps.",
   "version": "0.1.0",
   "extensionDependencies": [
