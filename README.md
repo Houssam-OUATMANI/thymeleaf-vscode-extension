@@ -4,9 +4,7 @@
 
 Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed completion, navigation, diagnostics, and refactoring in Visual Studio Code.
 
-## Showcase
 
-![Thymeleaf Companion feature showcase](https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/showcase.gif)
 
 ## Features
 
