@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 - Go to Type Definition from Thymeleaf model properties and model variables.
 - Go to Definition, hover information, and completion for uniquely resolved no-argument Java and JDK methods, including inherited dependency-interface members exposed by JDTLS.
 - Contextual completion for `*{...}` selection expressions using the enclosing `th:object`.
+- Trigger Thymeleaf attribute completion after whitespace and replace partial attribute prefixes precisely.
+- Infer model collection types from `List.of`, `Set.of`, `Collection.of`, and `Arrays.asList` controller expressions.
 
 ### Fixed
 
@@ -16,6 +18,7 @@ All notable changes to this project are documented in this file.
 - Multi-root indexing retains all templates and refuses ambiguous template/type names instead of selecting an arbitrary root.
 - Message bundles now parse Java `.properties` whitespace separators, escapes, Unicode escapes, continued lines, and last-definition-wins duplicate keys.
 - Workspace-folder changes refresh the index; index refreshes are serialized to avoid overlapping rebuilds.
+- Same-named views in separate workspace roots retain separate Spring model inference and Java navigation.
 
 ## [0.1.0] - 2026-10-03
 

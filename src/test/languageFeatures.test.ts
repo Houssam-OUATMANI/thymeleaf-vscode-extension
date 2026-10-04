@@ -177,13 +177,31 @@ test("keeps same-named templates from multiple workspace roots without choosing 
       const packageName = index === 0 ? "firstapp" : "secondapp";
       const templates = path.join(workspaceRoot, "src", "main", "resources", "templates");
       const java = path.join(workspaceRoot, "src", "main", "java", packageName);
+      const templatePath = path.join(templates, "home.html");
       await Promise.all([
         mkdir(templates, { recursive: true }),
         mkdir(java, { recursive: true })
       ]);
       await Promise.all([
-        writeFile(path.join(templates, "home.html"), `<span th:text="\${user.name}"></span>`),
-        writeFile(path.join(java, "User.java"), `package ${packageName}; class User { String name; }`)
+        writeFile(
+          templatePath,
+          `<tr th:each="u : \${users}"><span th:text="\${u.${index === 0 ? "firstName" : "lastName"}}"></span></tr>`
+        ),
+        writeFile(
+          path.join(java, "User.java"),
+          `package ${packageName}; class User { String ${index === 0 ? "firstName" : "lastName"}; }`
+        ),
+        writeFile(
+          path.join(java, "HomeController.java"),
+          `package ${packageName};
+@Controller class HomeController {
+  @GetMapping("/home")
+  String home(Model model) {
+    model.addAttribute("users", List.of(new User()));
+    return "home";
+  }
+}`
+        )
       ]);
     }));
 
@@ -195,8 +213,81 @@ test("keeps same-named templates from multiple workspace roots without choosing 
     assert.equal(index.findClass("User"), undefined);
     assert.equal(index.findClass("firstapp.User")?.name, "User");
     assert.equal(index.findClass("secondapp.User")?.name, "User");
+    for (const [rootIndex, workspaceRoot] of roots.entries()) {
+      const packageName = rootIndex === 0 ? "firstapp" : "secondapp";
+      const templateUri = pathToFileURL(path.join(
+        workspaceRoot,
+        "src",
+        "main",
+        "resources",
+        "templates",
+        "home.html"
+      )).toString();
+      assert.equal(
+        index.modelAttributesForTemplate("home", templateUri).get("users"),
+        "List<" + packageName + ".User>"
+      );
+      const template = `<tr th:each="u : \${users}"><span th:text="\${u."></span></tr>`;
+      const document = TextDocument.create(templateUri, "html", 1, template);
+      const completions = provideCompletions(
+        document,
+        document.positionAt(template.indexOf("u.") + 2),
+        index
+      );
+      assert.ok(completions.some(({ label }) =>
+        label === (rootIndex === 0 ? "firstName" : "lastName")
+      ));
+      assert.ok(!completions.some(({ label }) =>
+        label === (rootIndex === 0 ? "lastName" : "firstName")
+      ));
+      const propertyText = `<tr th:each="u : \${users}"><span th:text="\${u.${rootIndex === 0 ? "firstName" : "lastName"}}"></span></tr>`;
+      const propertyDocument = TextDocument.create(templateUri, "html", 1, propertyText);
+      const propertyOffset = propertyText.indexOf(rootIndex === 0 ? "firstName" : "lastName");
+      const propertyDefinition = provideDefinition(
+        propertyDocument,
+        propertyDocument.positionAt(propertyOffset + 2),
+        index
+      );
+      assert.ok(propertyDefinition);
+      assert.equal(
+        propertyDefinition.uri,
+        pathToFileURL(path.join(
+          workspaceRoot,
+          "src",
+          "main",
+          "java",
+          packageName,
+          "User.java"
+        )).toString()
+      );
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("offers Thymeleaf attribute completion after a space and replaces partial prefixes", async () => {
+  const fixture = await createFixture();
+  try {
+    for (const [text, prefix, expected] of [
+      ["<div ", "", "th:text"],
+      ["<div th:t", "th:t", "th:text"],
+      ["<div\n  th:t", "th:t", "th:text"]
+    ] as const) {
+      const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+      const completions = provideCompletions(
+        document,
+        document.positionAt(text.length),
+        fixture.index
+      );
+      const completion = completions.find(({ label }) => label === expected);
+      assert.ok(completion);
+      assert.deepEqual(completion.textEdit && "range" in completion.textEdit
+        ? document.getText(completion.textEdit.range)
+        : undefined, prefix);
+    }
+  } finally {
+    await fixture.dispose();
   }
 });
 
@@ -612,6 +703,39 @@ test("navigates to inherited dependency methods and completes no-argument method
       fixture.index
     );
     assert.ok(completions.some(({ label }) => label === "isLast()"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("navigates to JDK methods resolved from Java model properties", async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.index.addCompilerJavaTypes([{
+      alias: "String",
+      name: "String",
+      uri: "jdt://contents/java.base/java/lang/String.class",
+      position: { line: 0, character: 13 },
+      properties: [],
+      methods: [{
+        name: "toUpperCase",
+        returnType: "String",
+        parameterCount: 0,
+        position: { line: 504, character: 18 }
+      }]
+    }]);
+
+    const template = `<span th:text="\${user.displayName.toUpperCase()}"></span>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+    const methodOffset = template.indexOf("toUpperCase");
+    const definition = provideDefinition(
+      document,
+      document.positionAt(methodOffset + 3),
+      fixture.index
+    );
+    assert.ok(definition);
+    assert.equal(definition.uri, "jdt://contents/java.base/java/lang/String.class");
+    assert.deepEqual(definition.range.start, { line: 504, character: 18 });
   } finally {
     await fixture.dispose();
   }

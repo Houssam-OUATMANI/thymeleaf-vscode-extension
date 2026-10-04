@@ -72,6 +72,7 @@ export class ProjectIndex {
   private ambiguousTemplateNames = new Set<string>();
   private classesByName = new Map<string, JavaClass>();
   private ambiguousClassNames = new Set<string>();
+  private workspacePaths: string[] = [];
   private messagesByKey = new Map<string, IndexedMessageProperty[]>();
   private sourceHandlers: readonly ControllerHandler[] = [];
   private handlers: readonly ControllerHandler[] = [];
@@ -188,7 +189,7 @@ export class ProjectIndex {
     const templateByName = new Map<string, IndexedTemplate>();
     const templateByUri = new Map<string, IndexedTemplate>();
     const ambiguousTemplateNames = new Set<string>();
-    const javaSources = new Map<string, string>();
+    const javaSourcesByWorkspace: Map<string, string>[] = [];
     const messagesByKey = new Map<string, IndexedMessageProperty[]>();
     const normalizedOpenDocuments = new Map<string, string>();
     for (const [uri, content] of openDocuments) {
@@ -198,6 +199,8 @@ export class ProjectIndex {
 
     for (const workspaceUri of workspaceUris) {
       const workspacePath = fileURLToPath(workspaceUri);
+      const javaSources = new Map<string, string>();
+      javaSourcesByWorkspace.push(javaSources);
       const javaFiles = await findFiles(workspacePath, ".java");
       for (const javaFile of javaFiles) {
         javaSources.set(javaFile, await readContent(javaFile, normalizedOpenDocuments));
@@ -242,10 +245,11 @@ export class ProjectIndex {
       }
     }
 
-    const javaIndex = indexJavaSources(javaSources);
+    const javaIndexes = javaSourcesByWorkspace.map((javaSources) => indexJavaSources(javaSources));
+    const javaClasses = javaIndexes.flatMap(({ classes }) => classes);
     const classesByName = new Map<string, JavaClass>();
     const ambiguousClassNames = new Set<string>();
-    for (const javaClass of javaIndex.classes) {
+    for (const javaClass of javaClasses) {
       const existing = classesByName.get(javaClass.name);
       if (existing && existing.uri !== javaClass.uri) {
         classesByName.delete(javaClass.name);
@@ -261,10 +265,13 @@ export class ProjectIndex {
     this.ambiguousTemplateNames = ambiguousTemplateNames;
     this.classesByName = classesByName;
     this.ambiguousClassNames = ambiguousClassNames;
+    this.workspacePaths = workspaceUris.map((workspaceUri) =>
+      path.resolve(fileURLToPath(workspaceUri))
+    );
     this.messagesByKey = messagesByKey;
-    this.sourceHandlers = javaIndex.handlers;
-    this.handlers = javaIndex.handlers;
-    this.typeReferences = javaIndex.typeReferences;
+    this.sourceHandlers = javaIndexes.flatMap(({ handlers }) => handlers);
+    this.handlers = this.sourceHandlers;
+    this.typeReferences = javaIndexes.flatMap(({ typeReferences }) => typeReferences);
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
   }
@@ -281,9 +288,16 @@ export class ProjectIndex {
     return key ? this.templateByUri.get(key) : undefined;
   }
 
-  public getHandlersForTemplate(templateName: string): readonly ControllerHandler[] {
+  public getHandlersForTemplate(
+    templateName: string,
+    templateUri?: string
+  ): readonly ControllerHandler[] {
     const normalizedName = normalizeTemplateName(templateName);
-    return this.handlers.filter(({ viewName }) => viewName === normalizedName);
+    const workspaceRoot = templateUri ? this.workspaceRootForUri(templateUri) : undefined;
+    return this.handlers.filter(({ uri, viewName }) =>
+      viewName === normalizedName &&
+      (!workspaceRoot || this.workspaceRootForUri(uri) === workspaceRoot)
+    );
   }
 
   public findHandlersForRoute(routePath: string): readonly ControllerHandler[] {
@@ -374,11 +388,14 @@ export class ProjectIndex {
     return this.messagesByKey.size > 0;
   }
 
-  public modelAttributesForTemplate(templateName: string): ReadonlyMap<string, string> {
+  public modelAttributesForTemplate(
+    templateName: string,
+    templateUri?: string
+  ): ReadonlyMap<string, string> {
     const attributes = new Map<string, string>();
     const handlerTypes = new Map<string, Set<string>>();
-    const template = this.findTemplate(templateName);
-    for (const handler of this.getHandlersForTemplate(templateName)) {
+    const template = templateUri ? this.findTemplateByUri(templateUri) : this.findTemplate(templateName);
+    for (const handler of this.getHandlersForTemplate(templateName, templateUri)) {
       for (const [name, typeName] of handler.modelAttributes) {
         const types = handlerTypes.get(name) ?? new Set<string>();
         types.add(typeName);
@@ -398,20 +415,21 @@ export class ProjectIndex {
   }
 
   public modelAttributeDefinitionsForTemplate(
-    templateName: string
+    templateName: string,
+    templateUri?: string
   ): ReadonlyMap<string, { readonly uri: string; readonly position: SourcePosition }> {
     const definitions = new Map<string, { readonly uri: string; readonly position: SourcePosition }>();
     const handlerDefinitions = new Map<
       string,
       Map<string, { readonly uri: string; readonly position: SourcePosition }>
     >();
-    const template = this.findTemplate(templateName);
+    const template = templateUri ? this.findTemplateByUri(templateUri) : this.findTemplate(templateName);
     if (template) {
       for (const thymesVar of template.thymesVars) {
         definitions.set(thymesVar.id, { uri: template.uri, position: thymesVar.position });
       }
     }
-    for (const handler of this.getHandlersForTemplate(templateName)) {
+    for (const handler of this.getHandlersForTemplate(templateName, templateUri)) {
       for (const [name, position] of handler.modelAttributePositions) {
         const definitionKey = `${handler.uri}:${position.line}:${position.character}`;
         const candidates = handlerDefinitions.get(name) ?? new Map();
@@ -430,6 +448,17 @@ export class ProjectIndex {
 
   public get controllerHandlers(): readonly ControllerHandler[] {
     return this.handlers;
+  }
+
+  private workspaceRootForUri(uri: string): string | undefined {
+    try {
+      const filePath = path.resolve(fileURLToPath(uri));
+      return this.workspacePaths
+        .filter((workspacePath) => isWithin(workspacePath, filePath))
+        .sort((left, right) => right.length - left.length)[0];
+    } catch {
+      return undefined;
+    }
   }
 
   private registerCompilerTypeAlias(alias: string, javaClass: JavaClass): void {

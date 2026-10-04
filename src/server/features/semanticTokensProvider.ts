@@ -50,7 +50,7 @@ export function provideSemanticTokens(
 
   const template = index.findTemplateByUri(document.uri);
   const templateName = template?.name ?? "";
-  const modelAttributes = new Map(index.modelAttributesForTemplate(templateName));
+  const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, document.uri));
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
@@ -107,7 +107,17 @@ export function provideSemanticTokens(
 
   // 3. Tokenize each expression block
   for (const { body, prefix, baseOffset } of expressionBlocks) {
-    tokenizeExpression(body, prefix, baseOffset, text, templateName, modelAttributes, index, rawTokens);
+    tokenizeExpression(
+      body,
+      prefix,
+      baseOffset,
+      text,
+      templateName,
+      modelAttributes,
+      index,
+      rawTokens,
+      document.uri
+    );
   }
 
   // 4. Sort tokens sequentially by offset asc
@@ -135,7 +145,8 @@ function tokenizeExpression(
   templateName: string,
   modelAttributes: ReadonlyMap<string, string>,
   index: ProjectIndex,
-  outTokens: RawSemanticToken[]
+  outTokens: RawSemanticToken[],
+  templateUri: string
 ): void {
   let indexInBody = 0;
   const length = body.length;
@@ -241,7 +252,8 @@ function tokenizeExpression(
           baseOffset,
           fullText,
           templateName,
-          index
+          index,
+          templateUri
         );
         if (isMethodCall) {
           if (receiverType && index.findMethodReturnType(receiverType, word)) {
@@ -326,7 +338,8 @@ function resolveReceiverType(
   baseOffset: number,
   fullText: string,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri: string
 ): string | undefined {
   const receiverMatch = /([\w$]+(?:\s*\.\s*[\w$]+)*(?:\s*\(\s*\))*)\s*\.\s*$/
     .exec(body.slice(0, propertyStart));
@@ -338,7 +351,8 @@ function resolveReceiverType(
     fullText,
     baseOffset - 2,
     templateName,
-    index
+    index,
+    templateUri
   );
   return resolved && !resolved.unresolved ? resolved.typeName : undefined;
 }

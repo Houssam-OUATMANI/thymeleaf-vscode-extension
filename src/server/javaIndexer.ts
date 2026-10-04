@@ -865,10 +865,29 @@ export function inferModelExpressionType(
   const directType = handler.modelAttributes.get(expression);
   if (directType) return directType;
 
-  const constructorMatch = /^new\s*([\w$]+)(?:<[^>]+>)?/.exec(expression);
+  const constructorMatch = /^new\s*([\w$]+(?:<[^>]+>)?)/.exec(expression);
   if (constructorMatch) {
-    const className = constructorMatch[1];
-    return classesByName.get(className)?.qualifiedName ?? className;
+    const rawType = constructorMatch[1];
+    const genericStart = rawType.indexOf("<");
+    const className = genericStart < 0 ? rawType : rawType.slice(0, genericStart);
+    const qualifiedName = classesByName.get(className)?.qualifiedName ?? className;
+    return genericStart < 0
+      ? qualifiedName
+      : `${qualifiedName}${rawType.slice(genericStart)}`;
+  }
+
+  const collectionFactory = /^(?:(?:java\.util\.)?(List|Set|Collection)\.of|(?:java\.util\.)?Arrays\.asList)\s*\(([\s\S]*)\)$/.exec(expression);
+  if (collectionFactory) {
+    const [firstArgument] = splitTopLevelArguments(collectionFactory[2] ?? "");
+    if (firstArgument) {
+      const elementType = inferModelExpressionType(firstArgument, handler, classesByName);
+      if (elementType) {
+        const collectionType = collectionFactory[1] === "Set"
+          ? "Set"
+          : collectionFactory[1] === "Collection" ? "Collection" : "List";
+        return `${collectionType}<${elementType}>`;
+      }
+    }
   }
 
   const tokens = tokenizeJava(expression);
@@ -909,6 +928,33 @@ export function inferModelExpressionType(
     }
   }
   return typeName;
+}
+
+function splitTopLevelArguments(value: string): string[] {
+  const argumentsList: string[] = [];
+  let start = 0;
+  let parenDepth = 0;
+  let genericDepth = 0;
+  let quote: "'" | '"' | undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index - 1] !== "\\") quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth -= 1;
+    else if (character === "<") genericDepth += 1;
+    else if (character === ">") genericDepth -= 1;
+    else if (character === "," && parenDepth === 0 && genericDepth === 0) {
+      argumentsList.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  const lastArgument = value.slice(start).trim();
+  if (lastArgument) argumentsList.push(lastArgument);
+  return argumentsList;
 }
 
 function resolveMethodReturnType(

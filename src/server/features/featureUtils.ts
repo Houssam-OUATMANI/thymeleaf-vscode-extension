@@ -115,9 +115,10 @@ export function resolveModelPath(
   text: string,
   expressionOffset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): ResolvedModelPath | undefined {
-  const modelAttributes = new Map(index.modelAttributesForTemplate(templateName));
+  const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
@@ -277,9 +278,10 @@ export function modelAttributeDefinition(
   templateName: string,
   modelName: string,
   index: ProjectIndex,
-  currentText?: string
+  currentText?: string,
+  templateUri?: string
 ): Location | undefined {
-  const definition = index.modelAttributeDefinitionsForTemplate(templateName).get(modelName);
+  const definition = index.modelAttributeDefinitionsForTemplate(templateName, templateUri).get(modelName);
   if (definition) return locationAt(definition.uri, definition.position);
   if (currentText) {
     for (const thymesVar of findThymesVars(currentText)) {
@@ -289,7 +291,7 @@ export function modelAttributeDefinition(
       }
     }
   }
-  for (const handler of index.getHandlersForTemplate(templateName)) {
+  for (const handler of index.getHandlersForTemplate(templateName, templateUri)) {
     const typeName = handler.modelAttributes.get(modelName);
     const javaClass = typeName ? index.findClass(typeName) : undefined;
     if (javaClass) return locationAt(javaClass.uri, javaClass.position);
@@ -303,9 +305,10 @@ export function resolveExpressionProperty(
   text: string,
   expressionOffset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): JavaProperty | undefined {
-  return resolveModelPath(body, prefix, text, expressionOffset, templateName, index)?.property;
+  return resolveModelPath(body, prefix, text, expressionOffset, templateName, index, templateUri)?.property;
 }
 
 export function findEnclosingExpression(

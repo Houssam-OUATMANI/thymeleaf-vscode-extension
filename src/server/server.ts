@@ -52,7 +52,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: {
-        triggerCharacters: [":", "{", "$", "*", "#", "@", "~", "."]
+        triggerCharacters: [" ", ":", "{", "$", "*", "#", "@", "~", "."]
       },
       definitionProvider: true,
       typeDefinitionProvider: true,

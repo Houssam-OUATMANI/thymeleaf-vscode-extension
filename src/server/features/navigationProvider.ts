@@ -56,10 +56,10 @@ export function provideDefinition(
       return handler ? locationAt(handler.uri, handler.position) : undefined;
     }
 
-    const modelDefinition = findModelDefinitionAt(text, offset, template.name, index);
+    const modelDefinition = findModelDefinitionAt(text, offset, template.name, index, document.uri);
     if (modelDefinition) return modelDefinition;
 
-    const property = findModelPropertyAt(text, offset, template.name, index);
+    const property = findModelPropertyAt(text, offset, template.name, index, document.uri);
     if (property) return locationAt(property.uri, property.position);
 
     const messageRef = findMessageReference(text, offset);
@@ -100,8 +100,8 @@ export function provideTypeDefinition(
   const template = index.findTemplateByUri(document.uri);
   if (!template) return undefined;
 
-  const member = findModelMethodAt(text, offset, template.name, index) ??
-    findModelPropertyAt(text, offset, template.name, index);
+  const member = findModelMethodAt(text, offset, template.name, index, document.uri) ??
+    findModelPropertyAt(text, offset, template.name, index, document.uri);
   if (member) {
     const javaClass = findTypeClass(member.typeName, index);
     return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
@@ -114,7 +114,9 @@ export function provideTypeDefinition(
   const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - rootMatch[1].length;
   if (offset < rootStart || offset > rootStart + rootMatch[1].length) return undefined;
 
-  const modelAttributes = new Map(index.modelAttributesForTemplate(template.name));
+  const modelAttributes = new Map(
+    index.modelAttributesForTemplate(template.name, document.uri)
+  );
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
@@ -137,7 +139,7 @@ export function provideHover(
   const template = index.findTemplateByUri(document.uri);
   if (!template) return undefined;
 
-  const method = findModelMethodAt(text, offset, template.name, index);
+  const method = findModelMethodAt(text, offset, template.name, index, document.uri);
   if (method) {
     return {
       contents: {
@@ -148,7 +150,7 @@ export function provideHover(
     };
   }
 
-  const property = findModelPropertyAt(text, offset, template.name, index);
+  const property = findModelPropertyAt(text, offset, template.name, index, document.uri);
   if (property) {
     return {
       contents: {
@@ -224,7 +226,8 @@ export function provideReferences(
             candidate.content,
             baseOffset + expression.start,
             candidate.name,
-            index
+            index,
+            candidate.uri
           );
           if (
             !resolved ||
@@ -253,7 +256,7 @@ export function provideReferences(
     return [];
   }
 
-  const property = findModelPropertyAt(text, offset, template.name, index);
+  const property = findModelPropertyAt(text, offset, template.name, index, document.uri);
   if (property) {
     const references: Location[] = [];
     for (const candidate of index.templates) {
@@ -265,7 +268,8 @@ export function provideReferences(
           candidate.content,
           baseOffset + expression.start,
           candidate.name,
-          index
+          index,
+          candidate.uri
         );
         if (
           !resolved ||
@@ -375,7 +379,8 @@ export function provideThymeleafRenameEdits(
         content,
         baseOffset,
         template.name,
-        index
+        index,
+        template.uri
       )) {
         if (!sameJavaProperty(occurrence.property, target)) continue;
         edits.push({
@@ -389,7 +394,8 @@ export function provideThymeleafRenameEdits(
         content,
         baseOffset,
         template.name,
-        index
+        index,
+        template.uri
       )) {
         if (!sameJavaProperty(occurrence.property, target)) continue;
         edits.push({
@@ -407,11 +413,12 @@ function findModelPropertyOccurrence(
   text: string,
   offset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): { readonly property: JavaProperty; readonly range: Range } | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression) return undefined;
-  return findModelPropertyOccurrences(expression, text, 0, templateName, index)
+  return findModelPropertyOccurrences(expression, text, 0, templateName, index, templateUri)
     .find(({ range: occurrenceRange }) =>
       offset >= offsetAt(text, occurrenceRange.start) && offset <= offsetAt(text, occurrenceRange.end)
     );
@@ -421,11 +428,12 @@ function findModelMethodOccurrence(
   text: string,
   offset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): { readonly property: JavaProperty; readonly range: Range } | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression) return undefined;
-  return findModelMethodOccurrences(expression, text, 0, templateName, index)
+  return findModelMethodOccurrences(expression, text, 0, templateName, index, templateUri)
     .find(({ range }) =>
       offset >= offsetAt(text, range.start) && offset <= offsetAt(text, range.end)
     );
@@ -436,7 +444,8 @@ function findModelMethodOccurrences(
   text: string,
   baseOffset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): { readonly property: JavaProperty; readonly range: Range }[] {
   if (expression.prefix !== "$" && expression.prefix !== "*") return [];
   const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
@@ -458,7 +467,8 @@ function findModelMethodOccurrences(
         text,
         baseOffset + expression.start,
         templateName,
-        index
+        index,
+        templateUri
       );
       const property = receiver
         ? index.findMethodDefinition(receiver.typeName, name)
@@ -481,7 +491,8 @@ function findModelPropertyOccurrences(
   text: string,
   baseOffset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): { readonly property: JavaProperty; readonly range: Range }[] {
   if (expression.prefix !== "$" && expression.prefix !== "*") return [];
   const body = expression.body;
@@ -498,7 +509,8 @@ function findModelPropertyOccurrences(
       text,
       baseOffset + expression.start,
       templateName,
-      index
+      index,
+      templateUri
     );
     if (result?.property) {
       const start = baseOffset + expression.start + 2 + rootMatch.index + rootMatch[0].lastIndexOf(rootName);
@@ -526,7 +538,8 @@ function findModelPropertyOccurrences(
       text,
       baseOffset + expression.start,
       templateName,
-      index
+      index,
+      templateUri
     );
     if (result?.property) {
       const start = baseOffset + expression.start + 2 + nameOffset;
@@ -602,13 +615,14 @@ function findModelPropertyAt(
   text: string,
   offset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): JavaProperty | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression) return undefined;
-  const method = findModelMethodAt(text, offset, templateName, index);
+  const method = findModelMethodAt(text, offset, templateName, index, templateUri);
   if (method) return method;
-  return findModelPropertyOccurrences(expression, text, 0, templateName, index)
+  return findModelPropertyOccurrences(expression, text, 0, templateName, index, templateUri)
     .find(({ range }) =>
       offset >= offsetAt(text, range.start) && offset <= offsetAt(text, range.end)
     )?.property;
@@ -618,7 +632,8 @@ function findModelMethodAt(
   text: string,
   offset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri?: string
 ): JavaProperty | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || (expression.prefix !== "$" && expression.prefix !== "*")) return undefined;
@@ -642,7 +657,8 @@ function findModelMethodAt(
         text,
         expression.start,
         templateName,
-        index
+        index,
+        templateUri
       );
       return receiver
         ? index.findMethodDefinition(receiver.typeName, name)
@@ -657,7 +673,8 @@ function findModelDefinitionAt(
   text: string,
   offset: number,
   templateName: string,
-  index: ProjectIndex
+  index: ProjectIndex,
+  templateUri: string
 ): Location | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || expression.prefix !== "$") return undefined;
@@ -666,9 +683,9 @@ function findModelDefinitionAt(
   const modelName = rootMatch[1];
   const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - modelName.length;
   if (offset < rootStart || offset > rootStart + modelName.length) return undefined;
-  return modelAttributeDefinition(templateName, modelName, index, text) ??
+  return modelAttributeDefinition(templateName, modelName, index, text, templateUri) ??
     (() => {
-      const modelAttributes = new Map(index.modelAttributesForTemplate(templateName));
+      const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
       for (const thymesVar of findThymesVars(text)) {
         modelAttributes.set(thymesVar.id, thymesVar.typeName);
       }

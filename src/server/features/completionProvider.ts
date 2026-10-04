@@ -182,7 +182,9 @@ export function provideCompletions(
 
   const modelNameContext = findModelNameContext(text, offset, document.uri, index);
   if (modelNameContext) {
-    const modelAttributes = new Map(index.modelAttributesForTemplate(modelNameContext.templateName));
+    const modelAttributes = new Map(
+      index.modelAttributesForTemplate(modelNameContext.templateName, document.uri)
+    );
     for (const thymesVar of findThymesVars(text)) {
       modelAttributes.set(thymesVar.id, thymesVar.typeName);
     }
@@ -233,14 +235,21 @@ export function provideCompletions(
   }
 
   if (isInsideTag(text, offset) && !isInsideAttributeValue(text, offset)) {
-    return prioritizeThymeleaf(THYMELEAF_ATTRIBUTES.map(({ name, description, value }) => ({
-      label: name,
-      kind: CompletionItemKind.Property,
-      detail: value,
-      documentation: description,
-      insertText: `${name}="$1"`,
-      insertTextFormat: 2
-    })));
+    const attributeContext = findAttributeNameContext(text, offset);
+    if (!attributeContext) return [];
+    return prioritizeThymeleaf(THYMELEAF_ATTRIBUTES
+      .filter(({ name }) => name.startsWith(attributeContext.prefix))
+      .map(({ name, description, value }) => ({
+        label: name,
+        kind: CompletionItemKind.Property,
+        detail: value,
+        documentation: description,
+        textEdit: TextEdit.replace(
+          Range.create(document.positionAt(attributeContext.startOffset), position),
+          `${name}="$1"`
+        ),
+        insertTextFormat: 2
+      })));
   }
   return [];
 }
@@ -258,7 +267,9 @@ function findSelectionPropertyContext(
   const beforeCursor = expression.body.slice(0, Math.max(0, offset - bodyStart));
   if (beforeCursor.includes(".")) return undefined;
 
-  const modelAttributes = new Map(index.modelAttributesForTemplate(template?.name ?? ""));
+  const modelAttributes = new Map(
+    index.modelAttributesForTemplate(template?.name ?? "", documentUri)
+  );
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
@@ -303,7 +314,8 @@ function findModelPropertyContext(
     text,
     expression.start,
     templateName,
-    index
+    index,
+    documentUri
   );
   if (!resolved || resolved.unresolved) return undefined;
   return {
@@ -364,6 +376,25 @@ function isInsideTag(text: string, offset: number): boolean {
   const prefix = text.slice(0, offset);
   const open = prefix.lastIndexOf("<");
   return open > prefix.lastIndexOf(">") && !prefix.slice(open).startsWith("<!--");
+}
+
+function findAttributeNameContext(
+  text: string,
+  offset: number
+): { readonly prefix: string; readonly startOffset: number } | undefined {
+  const tagStart = text.lastIndexOf("<", offset);
+  if (tagStart < 0) return undefined;
+  const beforeCursor = text.slice(tagStart + 1, offset);
+  const tagName = /^[\w:-]+/.exec(beforeCursor)?.[0];
+  if (!tagName || beforeCursor.length === tagName.length) return undefined;
+  const attributesPrefix = beforeCursor.slice(tagName.length);
+  const current = /(?:^|\s)([^\s]*)$/.exec(attributesPrefix);
+  if (!current || current.index === undefined) return undefined;
+  const prefix = current[1] ?? "";
+  return {
+    prefix,
+    startOffset: offset - prefix.length
+  };
 }
 
 function isInsideAttributeValue(text: string, offset: number): boolean {

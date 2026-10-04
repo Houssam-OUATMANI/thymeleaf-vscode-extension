@@ -171,7 +171,7 @@ export function validateDocument(
   }
 
   if (settings.validation.unknownModelProperties) {
-    diagnostics.push(...validateModelProperties(text, currentTemplateName, index));
+    diagnostics.push(...validateModelProperties(text, currentTemplateName, index, document.uri));
   }
   return diagnostics;
 }
@@ -240,7 +240,12 @@ export function provideCodeActions(
   return actions;
 }
 
-function validateModelProperties(text: string, templateName: string, index: ProjectIndex): Diagnostic[] {
+function validateModelProperties(
+  text: string,
+  templateName: string,
+  index: ProjectIndex,
+  templateUri: string
+): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const expressionsToCheck: { expression: ThymeleafExpression; baseOffset: number }[] = [];
 
@@ -264,7 +269,8 @@ function validateModelProperties(text: string, templateName: string, index: Proj
       text,
       baseOffset + expression.start,
       templateName,
-      index
+      index,
+      templateUri
     );
     if (!resolved?.unresolved) continue;
     const { name, typeName, offset } = resolved.unresolved;
