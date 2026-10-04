@@ -206,7 +206,8 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
   const javaRoot = path.join(root, "src", "main", "java", "demo");
   const templatePath = path.join(templateRoot, "remote.html");
   const controllerPath = path.join(javaRoot, "RemoteController.java");
-  const template = `<span th:text="\${remote.}"></span>`;
+  const template = `<span th:text="\${remote.}"></span>
+<span th:each="item: \${remoteRows}" th:text="\${item.}"></span>`;
   try {
     await Promise.all([
       mkdir(templateRoot, { recursive: true }),
@@ -216,9 +217,11 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
       writeFile(templatePath, template),
       writeFile(controllerPath, `package demo;
 @Controller class RemoteController {
+  private RemoteRepository remoteRepository;
   @GetMapping
   String index(Model model) {
     model.addAttribute("remote", new RemoteDto());
+    model.addAttribute("remoteRows", remoteRepository.findAll());
     return "remote";
   }
 }`)
@@ -227,6 +230,7 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
     const index = new ProjectIndex();
     await index.refresh([pathToFileURL(root).toString()]);
     assert.ok(index.unresolvedJavaTypeReferences.some(({ typeName }) => typeName === "RemoteDto"));
+    assert.ok(index.unresolvedJavaTypeReferences.some(({ typeName }) => typeName === "RemoteRepository"));
     index.addCompilerJavaTypes([{
       alias: "RemoteDto",
       name: "RemoteDto",
@@ -254,12 +258,32 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
         returnType: "List<T>",
         position: { line: 5, character: 15 }
       }]
+    }, {
+      alias: "RemoteRepository",
+      name: "RemoteRepository",
+      uri: "jdt://contents/dependency.jar/demo/RemoteRepository.class",
+      position: { line: 0, character: 10 },
+      properties: [],
+      methods: [],
+      superTypeNames: ["RemoteCrudRepository<RemoteDto>"]
+    }, {
+      alias: "RemoteCrudRepository",
+      name: "RemoteCrudRepository",
+      uri: "jdt://contents/dependency.jar/demo/RemoteCrudRepository.class",
+      position: { line: 0, character: 10 },
+      typeParameters: ["T"],
+      properties: [],
+      methods: [{
+        name: "findAll",
+        returnType: "List<T>"
+      }]
     }]);
 
     assert.equal(
       index.findProperty("RemotePage<RemoteDto>", "content")?.typeName,
       "List<RemoteDto>"
     );
+    assert.equal(index.modelAttributesForTemplate("remote").get("remoteRows"), "List<RemoteDto>");
     const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
     const completions = provideCompletions(
       document,
@@ -268,6 +292,14 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
     );
     assert.ok(completions.some(({ label }) => label === "displayName"));
     assert.ok(completions.some(({ label }) => label === "alias"));
+    const collectionCompletions = provideCompletions(
+      document,
+      document.positionAt(template.indexOf("item.") + "item.".length),
+      index
+    );
+    assert.ok(collectionCompletions.some(({ label }) => label === "displayName"));
+    index.clearCompilerJavaTypes();
+    assert.equal(index.modelAttributesForTemplate("remote").has("remoteRows"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -821,6 +853,25 @@ test("supports inherited properties from Java superclasses", async () => {
   }
 });
 
+test("completes properties for model values returned by a repository call", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<tr th:each="post: \${repoPosts}"><td th:text="\${post.}"></td></tr>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const offset = text.indexOf("post.") + "post.".length;
+    const completions = provideCompletions(
+      document,
+      document.positionAt(offset),
+      fixture.index
+    );
+
+    assert.ok(completions.some(({ label }) => label === "id"));
+    assert.ok(completions.some(({ label }) => label === "title"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;
@@ -864,10 +915,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 class UserController {
   record Foo(String bar, int total) {}
   private PostService postService;
+  private PostRepository postRepository;
   @GetMapping("/{id}")
   String list(@ModelAttribute("user") UserForm user, Model model) {
     var ps = postService.findAll();
     model.addAttribute("ps", ps);
+    model.addAttribute("repoPosts", postRepository.findAll());
     model.addAttribute("foo", new Foo("aze", 10));
     return "users/list";
   }
@@ -895,6 +948,11 @@ class Post {
 class PostService {
   Page<Post> findAll() { return null; }
 }`;
+  const postRepository = `package demo;
+interface PostRepository extends PostRepositoryBase<Post> {}
+interface PostRepositoryBase<T> {
+  java.util.List<T> findAll();
+}`;
   const messages = `welcome.title=Welcome to Thymeleaf
 nav.home=Home Page
 `;
@@ -912,6 +970,7 @@ nav.home=Home Page
     writeFile(postPath, post),
     writeFile(messagesPath, messages),
     writeFile(path.join(path.dirname(postPath), "PostService.java"), postService),
+    writeFile(path.join(path.dirname(postPath), "PostRepository.java"), postRepository),
     writeFile(fragmentPath, `<nav th:fragment="nav">Navigation</nav>`)
   ]);
 

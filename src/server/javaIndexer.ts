@@ -22,6 +22,7 @@ export interface JavaClass {
   readonly methodReturnTypes: ReadonlyMap<string, string>;
   readonly typeParameters?: readonly string[];
   readonly superClassName?: string;
+  readonly superTypeNames?: readonly string[];
 }
 
 export interface JavaTypeReference {
@@ -169,6 +170,7 @@ function parseJavaSource(
         break;
       }
     }
+    const superTypeNames = readSuperTypeNames(tokens, index + 2, bodyStart);
 
     const classMembers = readClassMembers(tokens, bodyStart, bodyEnd);
     const properties = new Map<string, JavaProperty>();
@@ -246,7 +248,8 @@ function parseJavaSource(
       properties,
       methodReturnTypes,
       typeParameters,
-      superClassName
+      superClassName,
+      superTypeNames
     });
 
     if (!classAnnotations.some(({ name }) => CONTROLLER_ANNOTATIONS.has(name))) {
@@ -833,7 +836,7 @@ function findAddedModelVariables(body: readonly Token[]): [string, string, numbe
   return attributes;
 }
 
-function inferModelExpressionType(
+export function inferModelExpressionType(
   expression: string,
   handler: ControllerHandler,
   classesByName: ReadonlyMap<string, JavaClass>
@@ -847,19 +850,147 @@ function inferModelExpressionType(
     return classesByName.get(className)?.qualifiedName ?? className;
   }
 
-  const invocation = /^(?:this\.)?([\w$]+)\.([\w$]+)\s*\(/.exec(expression);
-  if (!invocation) return undefined;
-  const [, fieldName, methodName] = invocation;
-  if (!fieldName || !methodName) return undefined;
-
+  const tokens = tokenizeJava(expression);
+  if (tokens.length === 0) return undefined;
   const owner = classesByName.get(handler.ownerType);
-  const fieldType = owner?.properties.get(fieldName)?.typeName;
-  if (!fieldType) return undefined;
-  const rawFieldType = fieldType.replace(/<.*>$/, "").trim();
-  const targetClass = classesByName.get(rawFieldType)
-    ?? classesByName.get(rawFieldType.split(".").at(-1) ?? rawFieldType);
-  const returnType = targetClass?.methodReturnTypes.get(methodName);
-  return returnType;
+  if (!owner) return undefined;
+
+  let tokenIndex = 0;
+  if (tokens[tokenIndex]?.text === "this" && tokens[tokenIndex + 1]?.text === ".") {
+    tokenIndex += 2;
+  }
+  const root = tokens[tokenIndex];
+  if (!root || root.kind !== "identifier") return undefined;
+  tokenIndex += 1;
+
+  let typeName = owner.properties.get(root.text)?.typeName
+    ?? resolveMethodReturnType(owner.qualifiedName, root.text, classesByName);
+  if (!typeName) return undefined;
+
+  while (tokenIndex < tokens.length) {
+    if (tokens[tokenIndex]?.text !== ".") return undefined;
+    const member = tokens[tokenIndex + 1];
+    if (!member || member.kind !== "identifier") return undefined;
+    tokenIndex += 2;
+
+    const isMethodCall = tokens[tokenIndex]?.text === "(";
+    if (isMethodCall) {
+      const close = findMatching(tokens, tokenIndex, "(", ")");
+      if (close < 0) return undefined;
+      tokenIndex = close + 1;
+      const returnType = resolveMethodReturnType(typeName, member.text, classesByName);
+      if (!returnType) return undefined;
+      typeName = returnType;
+    } else {
+      const propertyType = resolvePropertyType(typeName, member.text, classesByName);
+      if (!propertyType) return undefined;
+      typeName = propertyType;
+    }
+  }
+  return typeName;
+}
+
+function resolveMethodReturnType(
+  typeName: string,
+  methodName: string,
+  classesByName: ReadonlyMap<string, JavaClass>,
+  visited = new Set<string>()
+): string | undefined {
+  const javaClass = findClassByName(typeName, classesByName);
+  if (!javaClass || visited.has(javaClass.qualifiedName)) return undefined;
+  visited.add(javaClass.qualifiedName);
+
+  const ownReturnType = javaClass.methodReturnTypes.get(methodName);
+  if (ownReturnType) return substituteTypeParameters(ownReturnType, javaClass, typeName);
+
+  for (const superType of getSuperTypeNames(javaClass)) {
+    const resolvedSuperType = substituteTypeParameters(superType, javaClass, typeName);
+    const returnType = resolveMethodReturnType(resolvedSuperType, methodName, classesByName, visited);
+    if (returnType) return returnType;
+  }
+  return undefined;
+}
+
+function resolvePropertyType(
+  typeName: string,
+  propertyName: string,
+  classesByName: ReadonlyMap<string, JavaClass>,
+  visited = new Set<string>()
+): string | undefined {
+  const javaClass = findClassByName(typeName, classesByName);
+  if (!javaClass || visited.has(javaClass.qualifiedName)) return undefined;
+  visited.add(javaClass.qualifiedName);
+
+  const property = javaClass.properties.get(propertyName);
+  if (property) return substituteTypeParameters(property.typeName, javaClass, typeName);
+
+  for (const superType of getSuperTypeNames(javaClass)) {
+    const resolvedSuperType = substituteTypeParameters(superType, javaClass, typeName);
+    const propertyType = resolvePropertyType(resolvedSuperType, propertyName, classesByName, visited);
+    if (propertyType) return propertyType;
+  }
+  return undefined;
+}
+
+function findClassByName(
+  typeName: string,
+  classesByName: ReadonlyMap<string, JavaClass>
+): JavaClass | undefined {
+  const rawType = typeName.replace(/<.*>$/, "").trim();
+  const simpleName = rawType.split(".").at(-1) ?? rawType;
+  return classesByName.get(rawType) ?? classesByName.get(simpleName);
+}
+
+function getSuperTypeNames(javaClass: JavaClass): readonly string[] {
+  if (javaClass.superTypeNames && javaClass.superTypeNames.length > 0) {
+    return javaClass.superTypeNames;
+  }
+  return javaClass.superClassName ? [javaClass.superClassName] : [];
+}
+
+export function substituteTypeParameters(
+  memberType: string,
+  javaClass: JavaClass,
+  declaredType: string
+): string {
+  const parameters = javaClass.typeParameters ?? [];
+  const actualTypes = parseTypeArguments(declaredType);
+  if (parameters.length === 0 || actualTypes.length !== parameters.length) return memberType;
+
+  let resolvedType = memberType;
+  for (let index = 0; index < parameters.length; index += 1) {
+    const parameter = parameters[index];
+    const actualType = actualTypes[index];
+    if (!parameter || !actualType) continue;
+    resolvedType = resolvedType.replace(
+      new RegExp(`\\b${escapeJavaRegExp(parameter)}\\b`, "g"),
+      actualType
+    );
+  }
+  return resolvedType;
+}
+
+function parseTypeArguments(typeName: string): string[] {
+  const open = typeName.indexOf("<");
+  const close = typeName.lastIndexOf(">");
+  if (open < 0 || close <= open) return [];
+  const argumentsList: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let index = open + 1; index < close; index += 1) {
+    if (typeName[index] === "<") depth += 1;
+    else if (typeName[index] === ">") depth -= 1;
+    else if (typeName[index] === "," && depth === 0) {
+      argumentsList.push(typeName.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  argumentsList.push(typeName.slice(start, close).trim());
+  return argumentsList;
+}
+
+function escapeJavaRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readPackageName(tokens: readonly Token[]): string {
@@ -868,6 +999,38 @@ function readPackageName(tokens: readonly Token[]): string {
   return tokens.slice(packageIndex + 1, tokens.findIndex((token, index) => index > packageIndex && token.text === ";"))
     .map(({ text }) => text)
     .join("");
+}
+
+function readSuperTypeNames(tokens: readonly Token[], start: number, end: number): string[] {
+  const superTypes: string[] = [];
+  let angleDepth = 0;
+  let collecting = false;
+  let currentType: string[] = [];
+  const addCurrentType = (): void => {
+    const typeName = currentType.join("");
+    if (typeName) superTypes.push(typeName);
+    currentType = [];
+  };
+
+  for (let index = start; index < end; index += 1) {
+    const text = tokens[index]?.text;
+    if (text === "<") {
+      angleDepth += 1;
+      if (collecting) currentType.push(text);
+    } else if (text === ">") {
+      angleDepth -= 1;
+      if (collecting) currentType.push(text);
+    } else if (angleDepth === 0 && ["extends", "implements", "permits"].includes(text ?? "")) {
+      if (collecting) addCurrentType();
+      collecting = text !== "permits";
+    } else if (collecting && angleDepth === 0 && text === ",") {
+      addCurrentType();
+    } else if (collecting && text !== undefined) {
+      currentType.push(text);
+    }
+  }
+  if (collecting) addCurrentType();
+  return superTypes;
 }
 
 function declarationStart(tokens: readonly Token[], declarationIndex: number): number {

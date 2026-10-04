@@ -71,13 +71,18 @@ export function registerJavaSupport(
   let javaApiPromise: Promise<JavaExtensionApi | undefined> | undefined;
   let classpathReport: Promise<void> | undefined;
   let latestReferences: readonly JavaTypeReference[] = [];
-  const resolvedTypes = new Map<string, CompilerJavaType>();
+  const resolvedHierarchies = new Map<
+    string,
+    readonly { readonly reference: JavaTypeReference; readonly type: CompilerJavaType }[]
+  >();
   const invalidateDocumentTypes = (uri: vscode.Uri): void => {
     if (!/\.java$/i.test(uri.fsPath)) return;
     const prefix = `${uri.toString()}:`;
     const changedUri = uri.toString();
-    for (const [key, type] of resolvedTypes) {
-      if (key.startsWith(prefix) || type.uri === changedUri) resolvedTypes.delete(key);
+    for (const [key, hierarchy] of resolvedHierarchies) {
+      if (key.startsWith(prefix) || hierarchy.some(({ type }) => type.uri === changedUri)) {
+        resolvedHierarchies.delete(key);
+      }
     }
   };
 
@@ -204,7 +209,7 @@ export function registerJavaSupport(
         return;
       }
       context.subscriptions.push(api.onDidClasspathUpdate(() => {
-        resolvedTypes.clear();
+        resolvedHierarchies.clear();
         classpathReport = undefined;
         void (async () => {
           await client.sendNotification("thymeleaf/resetJavaCompilerTypes");
@@ -214,7 +219,7 @@ export function registerJavaSupport(
         });
       }));
       context.subscriptions.push(api.onDidProjectsImport(() => {
-        resolvedTypes.clear();
+        resolvedHierarchies.clear();
         classpathReport = undefined;
         void (async () => {
           await client.sendNotification("thymeleaf/resetJavaCompilerTypes");
@@ -299,22 +304,83 @@ export function registerJavaSupport(
     const relevant = [...relevantTypes.values()];
     await runWithConcurrency(relevant, 6, async (reference) => {
       const key = typeReferenceKey(reference);
-      if (resolvedTypes.has(key)) return;
-      const resolved = await resolveCompilerType(api, reference);
-      if (resolved) resolvedTypes.set(key, resolved);
+      let hierarchy = resolvedHierarchies.get(key);
+      if (!hierarchy) {
+        hierarchy = await resolveCompilerTypeHierarchy(api, reference);
+        resolvedHierarchies.set(key, hierarchy);
+      }
     });
-    const currentKeys = new Set(relevant.map(typeReferenceKey));
-    const currentTypes = [...resolvedTypes]
-      .filter(([key]) => currentKeys.has(key))
-      .map(([, type]) => type);
     const uniqueTypes = new Map<string, CompilerJavaType>();
-    for (const type of currentTypes) {
-      uniqueTypes.set(`${type.uri}:${type.name}:${type.alias}`, type);
+    for (const reference of relevant) {
+      for (const { type } of resolvedHierarchies.get(typeReferenceKey(reference)) ?? []) {
+        uniqueTypes.set(`${type.uri}:${type.name}:${type.alias}`, type);
+      }
     }
     if (uniqueTypes.size > 0) {
       await client.sendNotification("thymeleaf/javaCompilerTypes", [...uniqueTypes.values()]);
     }
   }
+}
+
+async function resolveCompilerTypeHierarchy(
+  api: JavaExtensionApi,
+  reference: JavaTypeReference,
+  visited = new Set<string>(),
+  depth = 0
+): Promise<{ readonly reference: JavaTypeReference; readonly type: CompilerJavaType }[]> {
+  const key = typeReferenceKey(reference);
+  if (visited.has(key) || depth >= 12) return [];
+  visited.add(key);
+
+  const type = await resolveCompilerType(api, reference);
+  if (!type) return [];
+  const resolved = [{ reference, type }];
+  if (!type.superTypeNames?.length) return resolved;
+
+  const superReferences = await resolveCompilerSuperTypeReferences(type, reference);
+  for (const superReference of superReferences) {
+    resolved.push(...await resolveCompilerTypeHierarchy(api, superReference, visited, depth + 1));
+  }
+  return resolved;
+}
+
+async function resolveCompilerSuperTypeReferences(
+  type: CompilerJavaType,
+  sourceReference: JavaTypeReference
+): Promise<JavaTypeReference[]> {
+  const document = await documentFromUri(vscode.Uri.parse(type.uri));
+  const declarationOffset = document.offsetAt(
+    new vscode.Position(type.position.line, type.position.character)
+  );
+  const bodyStart = document.getText().indexOf("{", declarationOffset);
+  if (bodyStart < 0) return [];
+  const declarationHeader = document.getText().slice(declarationOffset, bodyStart);
+  const references: JavaTypeReference[] = [];
+  let searchOffset = 0;
+
+  for (const superType of type.superTypeNames ?? []) {
+    const simpleName = superType
+      .replace(/<.*>$/, "")
+      .split(".")
+      .at(-1);
+    if (!simpleName) continue;
+    const matcher = new RegExp(`\\b${simpleName}\\b`, "g");
+    matcher.lastIndex = searchOffset;
+    const match = matcher.exec(declarationHeader);
+    if (!match || match.index === undefined) continue;
+    searchOffset = matcher.lastIndex;
+    const position = document.positionAt(declarationOffset + match.index);
+    references.push({
+      uri: document.uri.toString(),
+      position: { line: position.line, character: position.character },
+      typeName: superType
+    });
+  }
+  return references.filter(({ uri, position }) =>
+    uri !== sourceReference.uri ||
+    position.line !== sourceReference.position.line ||
+    position.character !== sourceReference.position.character
+  );
 }
 
 async function requestRenameInfo(
@@ -369,6 +435,7 @@ async function resolveCompilerType(
   if (!selectionRange) return undefined;
   const typeDetail = getString(typeSymbol.detail) ?? "";
   const superClassName = /\bextends\s+([\w.$]+)/.exec(typeDetail)?.[1];
+  const superTypeNames = readCompilerSuperTypes(typeDetail);
   const typeParameters = /<([^<>]+)>/.exec(typeDetail)?.[1]
     ?.split(",")
     .map((parameter) => parameter.trim().split(/\s+/)[0])
@@ -409,6 +476,7 @@ async function resolveCompilerType(
     uri: definition.uri.toString(),
     position: { line: selectionRange.start.line, character: selectionRange.start.character },
     ...(superClassName && { superClassName }),
+    ...(superTypeNames.length > 0 && { superTypeNames }),
     ...(typeParameters && typeParameters.length > 0 && { typeParameters }),
     properties,
     methods
@@ -487,6 +555,45 @@ function symbolType(detail: string, method: boolean): string | undefined {
     ? /(?:^|\s)([\w.$<>?,\[\]]+)\s+[\w$]+\s*(?:=.*)?$/.exec(normalized)?.[1]
     : undefined;
   return fieldType;
+}
+
+function readCompilerSuperTypes(detail: string): string[] {
+  const superTypes: string[] = [];
+  let angleDepth = 0;
+  let clauseStart = -1;
+  let collecting = false;
+  const addClause = (end: number): void => {
+    if (clauseStart < 0) return;
+    const clause = detail.slice(clauseStart, end);
+    let depth = 0;
+    let start = 0;
+    for (let index = 0; index <= clause.length; index += 1) {
+      const character = clause[index];
+      if (character === "<") depth += 1;
+      else if (character === ">") depth -= 1;
+      else if ((character === "," && depth === 0) || index === clause.length) {
+        const typeName = clause.slice(start, index).trim();
+        if (typeName) superTypes.push(typeName);
+        start = index + 1;
+      }
+    }
+  };
+
+  for (let index = 0; index < detail.length; index += 1) {
+    const character = detail[index];
+    if (character === "<") angleDepth += 1;
+    else if (character === ">") angleDepth -= 1;
+    if (angleDepth !== 0) continue;
+
+    const keyword = /^(extends|implements|permits)\b/.exec(detail.slice(index));
+    if (!keyword) continue;
+    if (collecting) addClause(index);
+    collecting = keyword[1] !== "permits";
+    clauseStart = collecting ? index + keyword[0].length : -1;
+    index += keyword[0].length - 1;
+  }
+  if (collecting) addClause(detail.length);
+  return superTypes;
 }
 
 function typeReferenceKey(reference: JavaTypeReference): string {

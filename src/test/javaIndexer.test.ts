@@ -181,6 +181,49 @@ test("infers var model attributes from generic service method return types", () 
   assert.equal(handler?.modelAttributes.get("ps"), "Page<PostResponseDto>");
 });
 
+test("infers direct and chained service or repository calls through generic supertypes", () => {
+  const index = indexJavaSources(new Map([
+    ["C:/project/src/main/java/demo/PlayerController.java", `
+      package demo;
+      @Controller
+      class PlayerController {
+        private PlayerRepository playerRepository;
+        private PlayerService playerService;
+        String index(Model model) {
+          model.addAttribute("players", playerRepository.findAll());
+          model.addAttribute("servicePlayers", playerService.getRepository().findAll());
+          return "players";
+        }
+      }
+    `],
+    ["C:/project/src/main/java/demo/PlayerService.java", `
+      package demo;
+      class PlayerService {
+        private PlayerRepository playerRepository;
+        PlayerRepository getRepository() { return playerRepository; }
+      }
+    `],
+    ["C:/project/src/main/java/demo/PlayerRepository.java", `
+      package demo;
+      interface PlayerRepository extends BaseRepository<Player> {}
+    `],
+    ["C:/project/src/main/java/demo/BaseRepository.java", `
+      package demo;
+      interface BaseRepository<T> {
+        java.util.List<T> findAll();
+      }
+    `],
+    ["C:/project/src/main/java/demo/Player.java", `
+      package demo;
+      class Player { private String name; }
+    `]
+  ]));
+
+  const handler = index.handlers.find(({ name }) => name === "index");
+  assert.equal(handler?.modelAttributes.get("players"), "List<Player>");
+  assert.equal(handler?.modelAttributes.get("servicePlayers"), "List<Player>");
+});
+
 test("does not expose Spring infrastructure or scalar handler parameters as model attributes", () => {
   const index = indexJavaSources(new Map([
     ["C:/project/src/main/java/demo/UserController.java", `

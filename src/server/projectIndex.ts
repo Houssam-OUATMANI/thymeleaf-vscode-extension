@@ -3,11 +3,13 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ControllerHandler,
+  inferModelExpressionType,
   indexJavaSources,
   JavaClass,
   JavaProperty,
   JavaTypeReference,
-  SourcePosition
+  SourcePosition,
+  substituteTypeParameters
 } from "./javaIndexer";
 import { findThymeleafAttributes } from "../thymeleaf/htmlParser";
 
@@ -43,6 +45,7 @@ export interface CompilerJavaType {
   readonly uri: string;
   readonly position: SourcePosition;
   readonly superClassName?: string;
+  readonly superTypeNames?: readonly string[];
   readonly typeParameters?: readonly string[];
   readonly properties: readonly {
     readonly name: string;
@@ -67,6 +70,7 @@ export class ProjectIndex {
   private templateByUri = new Map<string, IndexedTemplate>();
   private classesByName = new Map<string, JavaClass>();
   private messagesByKey = new Map<string, IndexedMessageProperty[]>();
+  private sourceHandlers: readonly ControllerHandler[] = [];
   private handlers: readonly ControllerHandler[] = [];
   private typeReferences: readonly JavaTypeReference[] = [];
   private compilerTypes = new Map<string, JavaClass>();
@@ -90,6 +94,7 @@ export class ProjectIndex {
 
   public addCompilerJavaTypes(types: readonly CompilerJavaType[]): void {
     for (const type of types) {
+      const sourceClass = this.classesByName.get(type.name) ?? this.classesByName.get(type.alias);
       const properties = new Map<string, JavaProperty>();
       for (const property of type.properties) {
         properties.set(property.name, {
@@ -126,17 +131,26 @@ export class ProjectIndex {
         position: type.position,
         properties,
         methodReturnTypes,
-        ...(type.typeParameters && { typeParameters: type.typeParameters }),
-        ...(type.superClassName && { superClassName: type.superClassName })
+        ...((type.typeParameters ?? sourceClass?.typeParameters) && {
+          typeParameters: type.typeParameters ?? sourceClass?.typeParameters
+        }),
+        ...((type.superClassName ?? sourceClass?.superClassName) && {
+          superClassName: type.superClassName ?? sourceClass?.superClassName
+        }),
+        ...((type.superTypeNames ?? sourceClass?.superTypeNames) && {
+          superTypeNames: type.superTypeNames ?? sourceClass?.superTypeNames
+        })
       };
       this.registerCompilerTypeAlias(type.name, javaClass);
       this.registerCompilerTypeAlias(type.alias, javaClass);
     }
+    this.refreshHandlerModelTypes();
   }
 
   public clearCompilerJavaTypes(): void {
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
+    this.handlers = this.sourceHandlers;
   }
 
   public async refresh(
@@ -206,6 +220,7 @@ export class ProjectIndex {
     this.templateByUri = templateByUri;
     this.classesByName = classesByName;
     this.messagesByKey = messagesByKey;
+    this.sourceHandlers = javaIndex.handlers;
     this.handlers = javaIndex.handlers;
     this.typeReferences = javaIndex.typeReferences;
     this.compilerTypes.clear();
@@ -242,34 +257,13 @@ export class ProjectIndex {
   }
 
   public propertyNamesForType(typeName: string): readonly string[] {
-    const names = new Set<string>();
-    let currentClass = this.findClass(typeName);
-    const visited = new Set<string>();
-    while (currentClass && !visited.has(currentClass.name)) {
-      visited.add(currentClass.name);
-      for (const name of currentClass.properties.keys()) names.add(name);
-      if (!currentClass.superClassName) break;
-      currentClass = this.findClass(currentClass.superClassName);
-    }
-    return [...names];
+    return this.getPropertiesForClass(typeName).map(({ name }) => name);
   }
 
   public findProperty(typeName: string, propertyName: string): JavaProperty | undefined {
     const cleanProp = propertyName.replace(/\(\)$/, "");
-    let currentClass = this.findClass(typeName);
-    const declaredClass = currentClass;
-    const visited = new Set<string>();
-    while (currentClass && !visited.has(currentClass.name)) {
-      visited.add(currentClass.name);
-      const prop = currentClass.properties.get(propertyName) ?? currentClass.properties.get(cleanProp);
-      if (prop) {
-        return currentClass === declaredClass
-          ? { ...prop, typeName: substituteTypeParameters(prop.typeName, currentClass, typeName) }
-          : prop;
-      }
-      if (!currentClass.superClassName) break;
-      currentClass = this.findClass(currentClass.superClassName);
-    }
+    const property = this.findInheritedProperty(typeName, propertyName, cleanProp, new Set());
+    if (property) return property;
 
     const baseType = typeName.replace(/<.*>$/, "").split(".").at(-1) ?? typeName;
     const builtins = BUILTIN_TYPE_PROPERTIES.get(baseType);
@@ -284,20 +278,8 @@ export class ProjectIndex {
 
   public findMethodReturnType(typeName: string, methodName: string): string | undefined {
     const cleanMethodName = methodName.replace(/\(\)$/, "");
-    let currentClass = this.findClass(typeName);
-    const declaredClass = currentClass;
-    const visited = new Set<string>();
-    while (currentClass && !visited.has(currentClass.name)) {
-      visited.add(currentClass.name);
-      const returnType = currentClass.methodReturnTypes.get(cleanMethodName);
-      if (returnType) {
-        return currentClass === declaredClass
-          ? substituteTypeParameters(returnType, currentClass, typeName)
-          : returnType;
-      }
-      if (!currentClass.superClassName) break;
-      currentClass = this.findClass(currentClass.superClassName);
-    }
+    const returnType = this.findInheritedMethodReturnType(typeName, cleanMethodName, new Set());
+    if (returnType) return returnType;
 
     const baseType = typeName.replace(/<.*>$/, "").split(".").at(-1) ?? typeName;
     return BUILTIN_TYPE_PROPERTIES.get(baseType)
@@ -307,16 +289,7 @@ export class ProjectIndex {
 
   public getPropertiesForClass(typeName: string): readonly JavaProperty[] {
     const properties = new Map<string, JavaProperty>();
-    let currentClass = this.findClass(typeName);
-    const visited = new Set<string>();
-    while (currentClass && !visited.has(currentClass.name)) {
-      visited.add(currentClass.name);
-      for (const [name, prop] of currentClass.properties) {
-        if (!properties.has(name)) properties.set(name, prop);
-      }
-      if (!currentClass.superClassName) break;
-      currentClass = this.findClass(currentClass.superClassName);
-    }
+    this.collectInheritedProperties(typeName, properties, new Set());
 
     const baseType = typeName.replace(/<.*>$/, "").split(".").at(-1) ?? typeName;
     const builtins = BUILTIN_TYPE_PROPERTIES.get(baseType);
@@ -418,6 +391,96 @@ export class ProjectIndex {
     }
     this.compilerTypes.set(alias, javaClass);
   }
+
+  private refreshHandlerModelTypes(): void {
+    const classesByName = new Map<string, JavaClass>();
+    for (const javaClass of [...this.classesByName.values(), ...this.compilerTypes.values()]) {
+      classesByName.set(javaClass.name, javaClass);
+      classesByName.set(javaClass.qualifiedName, javaClass);
+    }
+    this.handlers = this.sourceHandlers.map((handler) => {
+      const modelAttributes = new Map(handler.modelAttributes);
+      for (const [attributeName, modelExpression] of handler.modelAttributeExpressions) {
+        const typeName = inferModelExpressionType(modelExpression.expression, handler, classesByName);
+        if (typeName) modelAttributes.set(attributeName, typeName);
+      }
+      return { ...handler, modelAttributes };
+    });
+  }
+
+  private findInheritedProperty(
+    typeName: string,
+    propertyName: string,
+    cleanPropertyName: string,
+    visited: Set<string>
+  ): JavaProperty | undefined {
+    const currentClass = this.findClass(typeName);
+    if (!currentClass || visited.has(currentClass.qualifiedName)) return undefined;
+    visited.add(currentClass.qualifiedName);
+
+    const property = currentClass.properties.get(propertyName) ?? currentClass.properties.get(cleanPropertyName);
+    if (property) {
+      return {
+        ...property,
+        typeName: substituteTypeParameters(property.typeName, currentClass, typeName)
+      };
+    }
+    for (const superType of superTypesForClass(currentClass)) {
+      const resolvedSuperType = substituteTypeParameters(superType, currentClass, typeName);
+      const inherited = this.findInheritedProperty(
+        resolvedSuperType,
+        propertyName,
+        cleanPropertyName,
+        visited
+      );
+      if (inherited) return inherited;
+    }
+    return undefined;
+  }
+
+  private findInheritedMethodReturnType(
+    typeName: string,
+    methodName: string,
+    visited: Set<string>
+  ): string | undefined {
+    const currentClass = this.findClass(typeName);
+    if (!currentClass || visited.has(currentClass.qualifiedName)) return undefined;
+    visited.add(currentClass.qualifiedName);
+
+    const returnType = currentClass.methodReturnTypes.get(methodName);
+    if (returnType) return substituteTypeParameters(returnType, currentClass, typeName);
+    for (const superType of superTypesForClass(currentClass)) {
+      const resolvedSuperType = substituteTypeParameters(superType, currentClass, typeName);
+      const inherited = this.findInheritedMethodReturnType(resolvedSuperType, methodName, visited);
+      if (inherited) return inherited;
+    }
+    return undefined;
+  }
+
+  private collectInheritedProperties(
+    typeName: string,
+    properties: Map<string, JavaProperty>,
+    visited: Set<string>
+  ): void {
+    const currentClass = this.findClass(typeName);
+    if (!currentClass || visited.has(currentClass.qualifiedName)) return;
+    visited.add(currentClass.qualifiedName);
+    for (const [name, property] of currentClass.properties) {
+      if (!properties.has(name)) {
+        properties.set(name, {
+          ...property,
+          typeName: substituteTypeParameters(property.typeName, currentClass, typeName)
+        });
+      }
+    }
+    for (const superType of superTypesForClass(currentClass)) {
+      this.collectInheritedProperties(
+        substituteTypeParameters(superType, currentClass, typeName),
+        properties,
+        visited
+      );
+    }
+  }
 }
 
 export function normalizeTemplateName(name: string): string {
@@ -516,45 +579,11 @@ function getterPropertyName(methodName: string, returnType: string): string | un
   return suffix ? suffix[0].toLowerCase() + suffix.slice(1) : undefined;
 }
 
-function substituteTypeParameters(
-  memberType: string,
-  javaClass: JavaClass,
-  declaredType: string
-): string {
-  const parameters = javaClass.typeParameters ?? [];
-  const actualTypes = parseTypeArguments(declaredType);
-  if (parameters.length === 0 || actualTypes.length !== parameters.length) return memberType;
-
-  let resolvedType = memberType;
-  for (let index = 0; index < parameters.length; index += 1) {
-    const parameter = parameters[index];
-    const actualType = actualTypes[index];
-    if (!parameter || !actualType) continue;
-    resolvedType = resolvedType.replace(
-      new RegExp(`\\b${escapeRegExp(parameter)}\\b`, "g"),
-      actualType
-    );
+function superTypesForClass(javaClass: JavaClass): readonly string[] {
+  if (javaClass.superTypeNames && javaClass.superTypeNames.length > 0) {
+    return javaClass.superTypeNames;
   }
-  return resolvedType;
-}
-
-function parseTypeArguments(typeName: string): string[] {
-  const open = typeName.indexOf("<");
-  const close = typeName.lastIndexOf(">");
-  if (open < 0 || close <= open) return [];
-  const argumentsList: string[] = [];
-  let depth = 0;
-  let start = open + 1;
-  for (let index = open + 1; index < close; index += 1) {
-    if (typeName[index] === "<") depth += 1;
-    else if (typeName[index] === ">") depth -= 1;
-    else if (typeName[index] === "," && depth === 0) {
-      argumentsList.push(typeName.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  argumentsList.push(typeName.slice(start, close).trim());
-  return argumentsList;
+  return javaClass.superClassName ? [javaClass.superClassName] : [];
 }
 
 function findFragments(content: string): IndexedFragment[] {
