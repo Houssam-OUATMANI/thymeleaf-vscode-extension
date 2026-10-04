@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- The language server no longer crashes during startup when registering workspace-folder change handling.
 - Nested model-property navigation and hover now resolve the exact member under the cursor.
 - Multi-root indexing retains all templates and refuses ambiguous template/type names instead of selecting an arbitrary root.
 - Message bundles now parse Java `.properties` whitespace separators, escapes, Unicode escapes, continued lines, and last-definition-wins duplicate keys.

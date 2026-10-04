@@ -84,6 +84,14 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 
 connection.onInitialized(async () => {
   await connection.client.register(DidChangeConfigurationNotification.type);
+  connection.workspace.onDidChangeWorkspaceFolders(({ added, removed: removedFolders }) => {
+    const removed = new Set(removedFolders.map(({ uri }) => uri));
+    workspaceUris = [
+      ...workspaceUris.filter((uri) => !removed.has(uri)),
+      ...added.map(({ uri }) => uri).filter((uri) => uri.startsWith("file:"))
+    ];
+    scheduleIndexRefresh();
+  });
   await refreshProjectIndex().catch((error: unknown) => {
     connection.console.error(`Unable to initialize the Thymeleaf project index: ${formatError(error)}`);
   });
@@ -115,14 +123,6 @@ documents.onDidClose(({ document }) => {
 });
 
 connection.onDidChangeWatchedFiles(() => scheduleIndexRefresh());
-connection.workspace.onDidChangeWorkspaceFolders(({ added, removed: removedFolders }) => {
-  const removed = new Set(removedFolders.map(({ uri }) => uri));
-  workspaceUris = [
-    ...workspaceUris.filter((uri) => !removed.has(uri)),
-    ...added.map(({ uri }) => uri).filter((uri) => uri.startsWith("file:"))
-  ];
-  scheduleIndexRefresh();
-});
 
 connection.onCompletion(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
