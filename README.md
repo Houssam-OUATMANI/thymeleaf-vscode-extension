@@ -8,13 +8,13 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 
 ## Features
 
-- Prioritized completion for Thymeleaf attributes, expressions, model properties, `th:each` variables, templates, fragments, and controller routes.
-- Contextual completion for `th:*` attributes after whitespace, model and selection expressions, including properties and no-argument Java methods inherited from indexed classes and interfaces.
-- Go to Definition and Go to Type Definition for Thymeleaf expressions, Java model properties and methods, controller routes, view names, templates, and fragments.
+- Prioritized completion for Thymeleaf attributes, model and selection expressions, `th:each` variables, templates, fragments, controller routes, and message keys.
+- Contextual completion for `th:*` attributes after whitespace, including precise replacement of partial prefixes, plus Java properties and no-argument methods inherited from indexed classes and interfaces.
+- Go to Definition for Java model properties and methods, controller routes, view names, templates, and fragments; Go to Type Definition for resolvable model variables and properties.
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
 - Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
-- Quick documentation, references, and semantic coloring for resolved Java-backed model properties and methods.
+- Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 
 ## Requirements

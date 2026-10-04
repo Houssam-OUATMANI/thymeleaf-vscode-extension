@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-04
 
 ### Added
 
@@ -12,6 +12,7 @@ All notable changes to this project are documented in this file.
 - Trigger Thymeleaf attribute completion after whitespace and replace partial attribute prefixes precisely.
 - Infer model collection types from `List.of`, `Set.of`, `Collection.of`, and `Arrays.asList` controller expressions.
 - Resolve overloaded generic repository methods by argument count and preserve class type parameters across Spring Data inheritance.
+- Keep completion and navigation responsive while editing templates by updating their in-memory index without rebuilding the whole workspace on every change.
 
 ### Fixed
 
@@ -21,6 +22,7 @@ All notable changes to this project are documented in this file.
 - Message bundles now parse Java `.properties` whitespace separators, escapes, Unicode escapes, continued lines, and last-definition-wins duplicate keys.
 - Workspace-folder changes refresh the index; index refreshes are serialized to avoid overlapping rebuilds.
 - Same-named views in separate workspace roots retain separate Spring model inference and Java navigation.
+- Open template edits update fragments and Thymeleaf variable directives immediately; closing a template restores its indexed disk content.
 
 ## [0.1.0] - 2026-10-03
 
