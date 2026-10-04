@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Go to Type Definition from Thymeleaf model properties and model variables.
+- Go to Definition, hover information, and completion for uniquely resolved no-argument Java and JDK methods, including inherited dependency-interface members exposed by JDTLS.
+- Contextual completion for `*{...}` selection expressions using the enclosing `th:object`.
+
+### Fixed
+
+- Nested model-property navigation and hover now resolve the exact member under the cursor.
+- Multi-root indexing retains all templates and refuses ambiguous template/type names instead of selecting an arbitrary root.
+- Message bundles now parse Java `.properties` whitespace separators, escapes, Unicode escapes, continued lines, and last-definition-wins duplicate keys.
+- Workspace-folder changes refresh the index; index refreshes are serialized to avoid overlapping rebuilds.
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

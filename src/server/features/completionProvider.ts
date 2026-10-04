@@ -12,6 +12,7 @@ import { THYMELEAF_ATTRIBUTES } from "../../thymeleaf/attributes";
 import {
   findEnclosingExpression,
   findEnclosingLoopVariables,
+  findSelectedObjectType,
   resolveModelPath,
   THYMELEAF_EXECUTION_OBJECTS
 } from "./featureUtils";
@@ -55,6 +56,22 @@ export function provideCompletions(
         label: name,
         kind: CompletionItemKind.File,
         detail: uri,
+        insertText: name
+      })));
+  }
+
+  const fragmentContext = findFragmentContext(linePrefix);
+  if (fragmentContext) {
+    const currentTemplate = index.findTemplateByUri(document.uri);
+    const targetTemplate = fragmentContext.templateName
+      ? index.findTemplate(fragmentContext.templateName)
+      : currentTemplate;
+    return prioritizeThymeleaf((targetTemplate?.fragments ?? [])
+      .filter(({ name }) => name.startsWith(fragmentContext.prefix))
+      .map(({ name }) => ({
+        label: name,
+        kind: CompletionItemKind.Reference,
+        detail: `Fragment in ${targetTemplate?.name ?? "current template"}`,
         insertText: name
       })));
   }
@@ -142,6 +159,27 @@ export function provideCompletions(
       })));
   }
 
+  const selectionPropertyContext = findSelectionPropertyContext(text, offset, document.uri, index);
+  if (selectionPropertyContext) {
+    return prioritizeThymeleaf(index.getPropertiesForClass(selectionPropertyContext.typeName)
+      .filter(({ name }) => name.startsWith(selectionPropertyContext.prefix))
+      .map((property) => ({
+        label: property.name,
+        kind: property.name.endsWith("()") ? CompletionItemKind.Method : CompletionItemKind.Property,
+        detail: property.typeName,
+        documentation: `Java model member \`${property.name}\``,
+        textEdit: TextEdit.replace(
+          Range.create(
+            position.line,
+            Math.max(0, position.character - selectionPropertyContext.prefix.length),
+            position.line,
+            position.character
+          ),
+          property.name
+        )
+      })));
+  }
+
   const modelNameContext = findModelNameContext(text, offset, document.uri, index);
   if (modelNameContext) {
     const modelAttributes = new Map(index.modelAttributesForTemplate(modelNameContext.templateName));
@@ -207,6 +245,34 @@ export function provideCompletions(
   return [];
 }
 
+function findSelectionPropertyContext(
+  text: string,
+  offset: number,
+  documentUri: string,
+  index: ProjectIndex
+): { readonly typeName: string; readonly prefix: string } | undefined {
+  const template = index.findTemplateByUri(documentUri);
+  const expression = findEnclosingExpression(text, offset);
+  if (!expression || expression.prefix !== "*") return undefined;
+  const bodyStart = expression.start + 2;
+  const beforeCursor = expression.body.slice(0, Math.max(0, offset - bodyStart));
+  if (beforeCursor.includes(".")) return undefined;
+
+  const modelAttributes = new Map(index.modelAttributesForTemplate(template?.name ?? ""));
+  for (const thymesVar of findThymesVars(text)) {
+    modelAttributes.set(thymesVar.id, thymesVar.typeName);
+  }
+  for (const loopVar of findEnclosingLoopVariables(text, offset, modelAttributes, index)) {
+    modelAttributes.set(loopVar.name, loopVar.typeName);
+  }
+  const typeName = findSelectedObjectType(text, expression.start, modelAttributes);
+  if (!typeName) return undefined;
+  return {
+    typeName,
+    prefix: /([\w$]*)$/.exec(beforeCursor)?.[1] ?? ""
+  };
+}
+
 function prioritizeThymeleaf(items: CompletionItem[]): CompletionItem[] {
   return items.map((item, index) => ({
     ...item,
@@ -270,6 +336,20 @@ function findTemplatePathContext(linePrefix: string): string | undefined {
   const reference = linePrefix.slice(marker + 2);
   if (reference.includes("::") || reference.includes("}")) return undefined;
   return reference.replace(/^[\s"']*/, "");
+}
+
+function findFragmentContext(
+  linePrefix: string
+): { readonly templateName: string; readonly prefix: string } | undefined {
+  const marker = linePrefix.lastIndexOf("~{");
+  if (marker < 0) return undefined;
+  const reference = linePrefix.slice(marker + 2);
+  const separator = reference.indexOf("::");
+  if (separator < 0 || reference.includes("}")) return undefined;
+  return {
+    templateName: reference.slice(0, separator).trim(),
+    prefix: reference.slice(separator + 2).trim()
+  };
 }
 
 function findRouteContext(linePrefix: string): string | undefined {

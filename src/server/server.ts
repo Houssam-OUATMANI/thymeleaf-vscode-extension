@@ -19,6 +19,7 @@ import { provideCompletions } from "./features/completionProvider";
 import {
   provideDefinition,
   provideHover,
+  provideTypeDefinition,
   prepareThymeleafRename,
   provideThymeleafRenameEdits,
   provideReferences
@@ -37,7 +38,7 @@ const projectIndex = new ProjectIndex();
 let workspaceUris: string[] = [];
 let settings: ThymeleafSettings = DEFAULT_SETTINGS;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-let refreshInProgress: Promise<void> | undefined;
+let refreshQueue: Promise<void> = Promise.resolve();
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   workspaceUris = (params.workspaceFolders ?? [])
@@ -54,6 +55,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
         triggerCharacters: [":", "{", "$", "*", "#", "@", "~", "."]
       },
       definitionProvider: true,
+      typeDefinitionProvider: true,
       referencesProvider: true,
       hoverProvider: true,
       codeActionProvider: {
@@ -69,7 +71,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       workspace: {
         workspaceFolders: {
           supported: true,
-          changeNotifications: false
+          changeNotifications: true
         }
       }
     },
@@ -113,6 +115,14 @@ documents.onDidClose(({ document }) => {
 });
 
 connection.onDidChangeWatchedFiles(() => scheduleIndexRefresh());
+connection.workspace.onDidChangeWorkspaceFolders(({ added, removed: removedFolders }) => {
+  const removed = new Set(removedFolders.map(({ uri }) => uri));
+  workspaceUris = [
+    ...workspaceUris.filter((uri) => !removed.has(uri)),
+    ...added.map(({ uri }) => uri).filter((uri) => uri.startsWith("file:"))
+  ];
+  scheduleIndexRefresh();
+});
 
 connection.onCompletion(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
@@ -122,6 +132,11 @@ connection.onCompletion(({ textDocument, position }) => {
 connection.onDefinition(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
   return document ? provideDefinition(document, position, projectIndex) : undefined;
+});
+
+connection.onTypeDefinition(({ textDocument, position }) => {
+  const document = documents.get(textDocument.uri);
+  return document ? provideTypeDefinition(document, position, projectIndex) : undefined;
 });
 
 connection.onHover(({ textDocument, position }) => {
@@ -192,20 +207,18 @@ function scheduleIndexRefresh(): void {
   }, 300);
 }
 
-async function refreshProjectIndex(): Promise<void> {
-  if (refreshInProgress) await refreshInProgress;
-  const openDocuments = new Map(documents.all().map((document) => [document.uri, document.getText()]));
-  refreshInProgress = projectIndex.refresh(workspaceUris, settings.templateLocations, openDocuments);
-  try {
-    await refreshInProgress;
+function refreshProjectIndex(): Promise<void> {
+  const refresh = refreshQueue.then(async () => {
+    const openDocuments = new Map(documents.all().map((document) => [document.uri, document.getText()]));
+    await projectIndex.refresh(workspaceUris, settings.templateLocations, openDocuments);
     connection.sendNotification(
       "thymeleaf/javaTypeReferences",
       projectIndex.javaTypeReferences
     );
     publishAllDiagnostics();
-  } finally {
-    refreshInProgress = undefined;
-  }
+  });
+  refreshQueue = refresh.catch(() => undefined);
+  return refresh;
 }
 
 function validateAndPublish(document: TextDocument): void {

@@ -55,7 +55,10 @@ interface JavaSymbolLike {
 }
 
 const NON_RESOLVABLE_TYPES = new Set([
-  "boolean", "byte", "char", "short", "int", "long", "float", "double", "void",
+  "boolean", "byte", "char", "short", "int", "long", "float", "double", "void"
+]);
+
+const SHARED_LIBRARY_TYPES = new Set([
   "String", "Integer", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Character",
   "Object", "UUID", "BigDecimal", "BigInteger", "Date", "LocalDate", "LocalTime",
   "LocalDateTime", "OffsetDateTime", "ZonedDateTime", "Instant", "List", "Set",
@@ -298,7 +301,9 @@ export function registerJavaSupport(
       const { typeName } = reference;
       const simpleName = typeName.split(".").at(-1) ?? typeName;
       if (NON_RESOLVABLE_TYPES.has(simpleName) || !/^[A-Z]/.test(simpleName)) continue;
-      const resolutionKey = typeReferenceKey(reference);
+      const resolutionKey = SHARED_LIBRARY_TYPES.has(simpleName)
+        ? `shared:${simpleName}`
+        : typeReferenceKey(reference);
       if (!relevantTypes.has(resolutionKey)) relevantTypes.set(resolutionKey, reference);
     }
     const relevant = [...relevantTypes.values()];
@@ -464,6 +469,7 @@ async function resolveCompilerType(
         methods.push({
           name,
           returnType,
+          parameterCount: getParameterCount(detail),
           ...(range && { position: { line: range.start.line, character: range.start.character } })
         });
       }
@@ -555,6 +561,13 @@ function symbolType(detail: string, method: boolean): string | undefined {
     ? /(?:^|\s)([\w.$<>?,\[\]]+)\s+[\w$]+\s*(?:=.*)?$/.exec(normalized)?.[1]
     : undefined;
   return fieldType;
+}
+
+function getParameterCount(detail: string): number | undefined {
+  const signature = /\(([^()]*)\)/.exec(detail)?.[1];
+  if (signature === undefined) return undefined;
+  if (!signature.trim()) return 0;
+  return signature.split(",").length;
 }
 
 function readCompilerSuperTypes(detail: string): string[] {

@@ -90,6 +90,43 @@ export function provideDefinition(
   return undefined;
 }
 
+export function provideTypeDefinition(
+  document: TextDocument,
+  position: Position,
+  index: ProjectIndex
+): Location | undefined {
+  const text = document.getText();
+  const offset = document.offsetAt(position);
+  const template = index.findTemplateByUri(document.uri);
+  if (!template) return undefined;
+
+  const member = findModelMethodAt(text, offset, template.name, index) ??
+    findModelPropertyAt(text, offset, template.name, index);
+  if (member) {
+    const javaClass = findTypeClass(member.typeName, index);
+    return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
+  }
+
+  const expression = findEnclosingExpression(text, offset);
+  if (!expression || expression.prefix !== "$") return undefined;
+  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  if (!rootMatch || rootMatch.index === undefined) return undefined;
+  const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - rootMatch[1].length;
+  if (offset < rootStart || offset > rootStart + rootMatch[1].length) return undefined;
+
+  const modelAttributes = new Map(index.modelAttributesForTemplate(template.name));
+  for (const thymesVar of findThymesVars(text)) {
+    modelAttributes.set(thymesVar.id, thymesVar.typeName);
+  }
+  const typeName = resolveModelType(rootMatch[1], text, expression.start, modelAttributes, index);
+  const javaClass = typeName ? findTypeClass(typeName, index) : undefined;
+  return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
+}
+
+function findTypeClass(typeName: string, index: ProjectIndex) {
+  return index.findClass(typeName) ?? index.findClass(getCollectionElementType(typeName));
+}
+
 export function provideHover(
   document: TextDocument,
   position: Position,
@@ -100,6 +137,17 @@ export function provideHover(
   const template = index.findTemplateByUri(document.uri);
   if (!template) return undefined;
 
+  const method = findModelMethodAt(text, offset, template.name, index);
+  if (method) {
+    return {
+      contents: {
+        kind: "markdown",
+        value: `**${method.name}()**: \`${method.typeName}\`\n\nJava method.`
+      },
+      range: rangeAtOffset(text, ...findWordRange(text, offset))
+    };
+  }
+
   const property = findModelPropertyAt(text, offset, template.name, index);
   if (property) {
     return {
@@ -107,7 +155,7 @@ export function provideHover(
         kind: "markdown",
         value: `**${property.name}**: \`${property.typeName}\`\n\nJava model property.`
       },
-      range: rangeAt(document, findWordRange(text, offset))
+      range: rangeAtOffset(text, ...findWordRange(text, offset))
     };
   }
 
@@ -271,7 +319,8 @@ export function prepareThymeleafRename(
   const template = index.findTemplateByUri(document.uri);
   const javaProperty = template ? undefined : findJavaPropertyAt(document, position, index)?.property;
   const target = template
-    ? findModelPropertyOccurrence(text, offset, template.name, index)
+    ? findModelMethodOccurrence(text, offset, template.name, index) ??
+      findModelPropertyOccurrence(text, offset, template.name, index)
     : javaProperty && {
         property: javaProperty,
         range: Range.create(
@@ -305,7 +354,10 @@ export function provideThymeleafRenameEdits(
   openDocuments: ReadonlyMap<string, string> = new Map()
 ): ThymeleafRenameEdit[] {
   const target = index.javaClasses
-    .flatMap((javaClass) => [...javaClass.properties.values()])
+    .flatMap((javaClass) => [
+      ...javaClass.properties.values(),
+      ...javaClass.methodDefinitions.values()
+    ])
     .find((property) =>
       sameFileUri(property.uri, javaUri) &&
       property.position.line === javaPosition.line &&
@@ -319,6 +371,20 @@ export function provideThymeleafRenameEdits(
     const content = openDocuments.get(template.uri) ?? template.content;
     for (const { expression, baseOffset } of collectAllExpressionsInTemplate(content)) {
       for (const occurrence of findModelPropertyOccurrences(
+        expression,
+        content,
+        baseOffset,
+        template.name,
+        index
+      )) {
+        if (!sameJavaProperty(occurrence.property, target)) continue;
+        edits.push({
+          uri: template.uri,
+          range: occurrence.range,
+          newText: newName
+        });
+      }
+      for (const occurrence of findModelMethodOccurrences(
         expression,
         content,
         baseOffset,
@@ -349,6 +415,65 @@ function findModelPropertyOccurrence(
     .find(({ range: occurrenceRange }) =>
       offset >= offsetAt(text, occurrenceRange.start) && offset <= offsetAt(text, occurrenceRange.end)
     );
+}
+
+function findModelMethodOccurrence(
+  text: string,
+  offset: number,
+  templateName: string,
+  index: ProjectIndex
+): { readonly property: JavaProperty; readonly range: Range } | undefined {
+  const expression = findEnclosingExpression(text, offset);
+  if (!expression) return undefined;
+  return findModelMethodOccurrences(expression, text, 0, templateName, index)
+    .find(({ range }) =>
+      offset >= offsetAt(text, range.start) && offset <= offsetAt(text, range.end)
+    );
+}
+
+function findModelMethodOccurrences(
+  expression: Pick<ThymeleafExpression, "prefix" | "body" | "start">,
+  text: string,
+  baseOffset: number,
+  templateName: string,
+  index: ProjectIndex
+): { readonly property: JavaProperty; readonly range: Range }[] {
+  if (expression.prefix !== "$" && expression.prefix !== "*") return [];
+  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  if (!rootMatch || rootMatch.index === undefined) return [];
+  const occurrences: { readonly property: JavaProperty; readonly range: Range }[] = [];
+  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
+  let accessOffset = rootMatch.index + rootMatch[0].length;
+
+  while (accessOffset < expression.body.length) {
+    accessPattern.lastIndex = accessOffset;
+    const access = accessPattern.exec(expression.body);
+    if (!access) break;
+    const name = access[1];
+    const nameOffset = accessOffset + access[0].indexOf(name);
+    if (access[2]) {
+      const receiver = resolveModelPath(
+        expression.body.slice(0, nameOffset),
+        expression.prefix,
+        text,
+        baseOffset + expression.start,
+        templateName,
+        index
+      );
+      const property = receiver
+        ? index.findMethodDefinition(receiver.typeName, name)
+        : undefined;
+      if (property) {
+        const start = baseOffset + expression.start + 2 + nameOffset;
+        occurrences.push({
+          property,
+          range: rangeAtOffset(text, start, start + name.length)
+        });
+      }
+    }
+    accessOffset += access[0].length;
+  }
+  return occurrences;
 }
 
 function findModelPropertyOccurrences(
@@ -462,6 +587,13 @@ function findJavaPropertyAt(
         return { property, typeName: javaClass.qualifiedName };
       }
     }
+    for (const method of javaClass.methodDefinitions.values()) {
+      if (method.position.line !== position.line) continue;
+      const endCharacter = method.position.character + method.name.length;
+      if (position.character >= method.position.character && position.character <= endCharacter) {
+        return { property: method, typeName: javaClass.qualifiedName };
+      }
+    }
   }
   return undefined;
 }
@@ -474,15 +606,51 @@ function findModelPropertyAt(
 ): JavaProperty | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression) return undefined;
-  const resolved = resolveExpressionProperty(
-    expression.body,
-    expression.prefix,
-    text,
-    expression.start,
-    templateName,
-    index
-  );
-  return resolved;
+  const method = findModelMethodAt(text, offset, templateName, index);
+  if (method) return method;
+  return findModelPropertyOccurrences(expression, text, 0, templateName, index)
+    .find(({ range }) =>
+      offset >= offsetAt(text, range.start) && offset <= offsetAt(text, range.end)
+    )?.property;
+}
+
+function findModelMethodAt(
+  text: string,
+  offset: number,
+  templateName: string,
+  index: ProjectIndex
+): JavaProperty | undefined {
+  const expression = findEnclosingExpression(text, offset);
+  if (!expression || (expression.prefix !== "$" && expression.prefix !== "*")) return undefined;
+  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  if (!rootMatch || rootMatch.index === undefined) return undefined;
+
+  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
+  let accessOffset = rootMatch.index + rootMatch[0].length;
+  while (accessOffset < expression.body.length) {
+    accessPattern.lastIndex = accessOffset;
+    const access = accessPattern.exec(expression.body);
+    if (!access) break;
+    const name = access[1];
+    const nameOffset = accessOffset + access[0].indexOf(name);
+    const nameStart = expression.start + 2 + nameOffset;
+    const nameEnd = nameStart + name.length;
+    if (access[2] && offset >= nameStart && offset <= nameEnd) {
+      const receiver = resolveModelPath(
+        expression.body.slice(0, nameOffset),
+        expression.prefix,
+        text,
+        expression.start,
+        templateName,
+        index
+      );
+      return receiver
+        ? index.findMethodDefinition(receiver.typeName, name)
+        : undefined;
+    }
+    accessOffset += access[0].length;
+  }
+  return undefined;
 }
 
 function findModelDefinitionAt(

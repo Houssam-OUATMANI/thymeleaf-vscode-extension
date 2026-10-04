@@ -242,15 +242,9 @@ export function provideCodeActions(
 
 function validateModelProperties(text: string, templateName: string, index: ProjectIndex): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  const modelAttributeNames = new Set([
-    "th:text", "th:utext", "th:if", "th:unless", "th:classappend", "th:value",
-    "th:field", "th:with", "th:each", "th:href", "th:src", "th:action"
-  ]);
-
   const expressionsToCheck: { expression: ThymeleafExpression; baseOffset: number }[] = [];
 
   for (const attribute of findThymeleafAttributes(text)) {
-    if (!modelAttributeNames.has(attribute.name)) continue;
     for (const expression of findThymeleafExpressions(attribute.value)) {
       expressionsToCheck.push({ expression, baseOffset: attribute.valueStart });
     }

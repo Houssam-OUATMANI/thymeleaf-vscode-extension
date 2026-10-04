@@ -56,6 +56,7 @@ export interface CompilerJavaType {
     readonly name: string;
     readonly returnType: string;
     readonly position?: SourcePosition;
+    readonly parameterCount?: number;
   }[];
 }
 
@@ -68,7 +69,9 @@ const DEFAULT_TEMPLATE_LOCATIONS = ["src/main/resources/templates"];
 export class ProjectIndex {
   private templateByName = new Map<string, IndexedTemplate>();
   private templateByUri = new Map<string, IndexedTemplate>();
+  private ambiguousTemplateNames = new Set<string>();
   private classesByName = new Map<string, JavaClass>();
+  private ambiguousClassNames = new Set<string>();
   private messagesByKey = new Map<string, IndexedMessageProperty[]>();
   private sourceHandlers: readonly ControllerHandler[] = [];
   private handlers: readonly ControllerHandler[] = [];
@@ -77,7 +80,7 @@ export class ProjectIndex {
   private ambiguousCompilerAliases = new Set<string>();
 
   public get templates(): readonly IndexedTemplate[] {
-    return [...this.templateByName.values()];
+    return [...this.templateByUri.values()];
   }
 
   public get javaClasses(): readonly JavaClass[] {
@@ -121,6 +124,29 @@ export class ProjectIndex {
           typeName: method.returnType,
           uri: type.uri,
           position: method.position,
+          renameable: false,
+          ...(method.parameterCount !== undefined && { parameterCount: method.parameterCount })
+        });
+      }
+      const methodDefinitions = new Map<string, JavaProperty>();
+      const methodsByName = new Map<string, NonNullable<CompilerJavaType["methods"][number]>[]>();
+      for (const method of type.methods) {
+        if (!method.position) continue;
+        const candidates = methodsByName.get(method.name) ?? [];
+        candidates.push(method);
+        methodsByName.set(method.name, candidates);
+      }
+      for (const [name, candidates] of methodsByName) {
+        const uniquePositions = new Set(candidates.map(({ position }) =>
+          `${position?.line}:${position?.character}`
+        ));
+        const [method] = candidates;
+        if (uniquePositions.size !== 1 || !method?.position) continue;
+        methodDefinitions.set(name, {
+          name,
+          typeName: method.returnType,
+          uri: type.uri,
+          position: method.position,
           renameable: false
         });
       }
@@ -131,6 +157,7 @@ export class ProjectIndex {
         position: type.position,
         properties,
         methodReturnTypes,
+        methodDefinitions,
         ...((type.typeParameters ?? sourceClass?.typeParameters) && {
           typeParameters: type.typeParameters ?? sourceClass?.typeParameters
         }),
@@ -160,6 +187,7 @@ export class ProjectIndex {
   ): Promise<void> {
     const templateByName = new Map<string, IndexedTemplate>();
     const templateByUri = new Map<string, IndexedTemplate>();
+    const ambiguousTemplateNames = new Set<string>();
     const javaSources = new Map<string, string>();
     const messagesByKey = new Map<string, IndexedMessageProperty[]>();
     const normalizedOpenDocuments = new Map<string, string>();
@@ -202,7 +230,12 @@ export class ProjectIndex {
             thymesVars: findThymesVars(content),
             content
           };
-          templateByName.set(name, template);
+          if (!ambiguousTemplateNames.has(name) && templateByName.has(name)) {
+            templateByName.delete(name);
+            ambiguousTemplateNames.add(name);
+          } else if (!ambiguousTemplateNames.has(name)) {
+            templateByName.set(name, template);
+          }
           const uriKey = fileUriKey(template.uri);
           if (uriKey) templateByUri.set(uriKey, template);
         }
@@ -211,14 +244,23 @@ export class ProjectIndex {
 
     const javaIndex = indexJavaSources(javaSources);
     const classesByName = new Map<string, JavaClass>();
+    const ambiguousClassNames = new Set<string>();
     for (const javaClass of javaIndex.classes) {
-      classesByName.set(javaClass.name, javaClass);
+      const existing = classesByName.get(javaClass.name);
+      if (existing && existing.uri !== javaClass.uri) {
+        classesByName.delete(javaClass.name);
+        ambiguousClassNames.add(javaClass.name);
+      } else if (!ambiguousClassNames.has(javaClass.name)) {
+        classesByName.set(javaClass.name, javaClass);
+      }
       classesByName.set(javaClass.qualifiedName, javaClass);
     }
 
     this.templateByName = templateByName;
     this.templateByUri = templateByUri;
+    this.ambiguousTemplateNames = ambiguousTemplateNames;
     this.classesByName = classesByName;
+    this.ambiguousClassNames = ambiguousClassNames;
     this.messagesByKey = messagesByKey;
     this.sourceHandlers = javaIndex.handlers;
     this.handlers = javaIndex.handlers;
@@ -228,7 +270,10 @@ export class ProjectIndex {
   }
 
   public findTemplate(name: string): IndexedTemplate | undefined {
-    return this.templateByName.get(normalizeTemplateName(name));
+    const normalizedName = normalizeTemplateName(name);
+    return this.ambiguousTemplateNames.has(normalizedName)
+      ? undefined
+      : this.templateByName.get(normalizedName);
   }
 
   public findTemplateByUri(uri: string): IndexedTemplate | undefined {
@@ -252,6 +297,7 @@ export class ProjectIndex {
     if (rawType.includes(".")) {
       return this.classesByName.get(rawType) ?? this.compilerTypes.get(rawType);
     }
+    if (this.ambiguousClassNames.has(rawType)) return undefined;
     if (this.ambiguousCompilerAliases.has(rawType)) return undefined;
     return this.compilerTypes.get(rawType) ?? this.classesByName.get(rawType);
   }
@@ -287,9 +333,14 @@ export class ProjectIndex {
       ?.typeName;
   }
 
+  public findMethodDefinition(typeName: string, methodName: string): JavaProperty | undefined {
+    return this.findInheritedMethodDefinition(typeName, methodName.replace(/\(\)$/, ""), new Set());
+  }
+
   public getPropertiesForClass(typeName: string): readonly JavaProperty[] {
     const properties = new Map<string, JavaProperty>();
     this.collectInheritedProperties(typeName, properties, new Set());
+    this.collectInheritedMethods(typeName, properties, new Set());
 
     const baseType = typeName.replace(/<.*>$/, "").split(".").at(-1) ?? typeName;
     const builtins = BUILTIN_TYPE_PROPERTIES.get(baseType);
@@ -457,6 +508,30 @@ export class ProjectIndex {
     return undefined;
   }
 
+  private findInheritedMethodDefinition(
+    typeName: string,
+    methodName: string,
+    visited: Set<string>
+  ): JavaProperty | undefined {
+    const currentClass = this.findClass(typeName);
+    if (!currentClass || visited.has(currentClass.qualifiedName)) return undefined;
+    visited.add(currentClass.qualifiedName);
+
+    const method = currentClass.methodDefinitions.get(methodName);
+    if (method) {
+      return {
+        ...method,
+        typeName: substituteTypeParameters(method.typeName, currentClass, typeName)
+      };
+    }
+    for (const superType of superTypesForClass(currentClass)) {
+      const resolvedSuperType = substituteTypeParameters(superType, currentClass, typeName);
+      const inherited = this.findInheritedMethodDefinition(resolvedSuperType, methodName, visited);
+      if (inherited) return inherited;
+    }
+    return undefined;
+  }
+
   private collectInheritedProperties(
     typeName: string,
     properties: Map<string, JavaProperty>,
@@ -475,6 +550,35 @@ export class ProjectIndex {
     }
     for (const superType of superTypesForClass(currentClass)) {
       this.collectInheritedProperties(
+        substituteTypeParameters(superType, currentClass, typeName),
+        properties,
+        visited
+      );
+    }
+  }
+
+  private collectInheritedMethods(
+    typeName: string,
+    properties: Map<string, JavaProperty>,
+    visited: Set<string>
+  ): void {
+    const currentClass = this.findClass(typeName);
+    if (!currentClass || visited.has(currentClass.qualifiedName)) return;
+    visited.add(currentClass.qualifiedName);
+
+    for (const method of currentClass.methodDefinitions.values()) {
+      if (method.parameterCount !== 0) continue;
+      const name = `${method.name}()`;
+      if (!properties.has(name)) {
+        properties.set(name, {
+          ...method,
+          name,
+          typeName: substituteTypeParameters(method.typeName, currentClass, typeName)
+        });
+      }
+    }
+    for (const superType of superTypesForClass(currentClass)) {
+      this.collectInheritedMethods(
         substituteTypeParameters(superType, currentClass, typeName),
         properties,
         visited
@@ -625,25 +729,76 @@ export function findThymesVars(content: string): IndexedThymesVar[] {
 
 export function parsePropertiesFile(content: string, uri: string): IndexedMessageProperty[] {
   const result: IndexedMessageProperty[] = [];
-  const lines = content.split("\n");
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const rawLine = lines[lineIndex].trim();
+  const lines = content.split(/\r\n|\n|\r/);
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const logicalStartLine = lineIndex;
+    let logicalLine = lines[lineIndex] ?? "";
+    while (hasUnescapedTrailingBackslash(logicalLine) && lineIndex + 1 < lines.length) {
+      logicalLine = logicalLine.slice(0, -1) + (lines[lineIndex + 1] ?? "").trimStart();
+      lineIndex += 1;
+    }
+    lineIndex += 1;
+
+    const leadingWhitespace = /^\s*/.exec(logicalLine)?.[0].length ?? 0;
+    const rawLine = logicalLine.slice(leadingWhitespace);
     if (!rawLine || rawLine.startsWith("#") || rawLine.startsWith("!")) continue;
-    const separatorMatch = /[:=]/.exec(rawLine);
-    if (!separatorMatch || separatorMatch.index === undefined) continue;
-    const key = rawLine.slice(0, separatorMatch.index).trim();
-    const value = rawLine.slice(separatorMatch.index + 1).trim();
-    if (!key) continue;
-    const originalLine = lines[lineIndex];
-    const keyCharacter = originalLine.indexOf(key);
-    result.push({
+
+    let separatorIndex = -1;
+    let escaped = false;
+    for (let index = 0; index < rawLine.length; index += 1) {
+      const character = rawLine[index];
+      if (!escaped && (character === "=" || character === ":" || /\s/.test(character))) {
+        separatorIndex = index;
+        break;
+      }
+      if (character === "\\" && !escaped) escaped = true;
+      else escaped = false;
+    }
+
+    const keyEnd = separatorIndex < 0 ? rawLine.length : separatorIndex;
+    const rawKey = rawLine.slice(0, keyEnd);
+    if (!rawKey) continue;
+
+    let valueStart = keyEnd;
+    while (valueStart < rawLine.length && /\s/.test(rawLine[valueStart])) valueStart += 1;
+    if (rawLine[valueStart] === "=" || rawLine[valueStart] === ":") valueStart += 1;
+    while (valueStart < rawLine.length && /\s/.test(rawLine[valueStart])) valueStart += 1;
+
+    const key = decodePropertiesEscapes(rawKey);
+    const value = decodePropertiesEscapes(rawLine.slice(valueStart));
+    const property: IndexedMessageProperty = {
       key,
       value,
       uri,
-      position: { line: lineIndex, character: Math.max(0, keyCharacter) }
-    });
+      position: { line: logicalStartLine, character: leadingWhitespace }
+    };
+    const existingIndex = result.findIndex((item) => item.key === key);
+    if (existingIndex >= 0) result[existingIndex] = property;
+    else result.push(property);
   }
   return result;
+}
+
+function hasUnescapedTrailingBackslash(value: string): boolean {
+  let count = 0;
+  for (let index = value.length - 1; index >= 0 && value[index] === "\\"; index -= 1) {
+    count += 1;
+  }
+  return count % 2 === 1;
+}
+
+function decodePropertiesEscapes(value: string): string {
+  return value.replace(/\\u([0-9a-fA-F]{4})|\\(.)/gs, (_match, unicode: string | undefined, escaped: string | undefined) => {
+    if (unicode) return String.fromCharCode(Number.parseInt(unicode, 16));
+    switch (escaped) {
+      case "t": return "\t";
+      case "n": return "\n";
+      case "r": return "\r";
+      case "f": return "\f";
+      default: return escaped ?? "";
+    }
+  });
 }
 
 function createBuiltinProperty(name: string, typeName: string): JavaProperty {

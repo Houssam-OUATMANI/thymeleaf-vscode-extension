@@ -11,6 +11,7 @@ export interface JavaProperty {
   readonly uri: string;
   readonly position: SourcePosition;
   readonly renameable?: boolean;
+  readonly parameterCount?: number;
 }
 
 export interface JavaClass {
@@ -20,6 +21,7 @@ export interface JavaClass {
   readonly position: SourcePosition;
   readonly properties: ReadonlyMap<string, JavaProperty>;
   readonly methodReturnTypes: ReadonlyMap<string, string>;
+  readonly methodDefinitions: ReadonlyMap<string, JavaProperty>;
   readonly typeParameters?: readonly string[];
   readonly superClassName?: string;
   readonly superTypeNames?: readonly string[];
@@ -175,6 +177,7 @@ function parseJavaSource(
     const classMembers = readClassMembers(tokens, bodyStart, bodyEnd);
     const properties = new Map<string, JavaProperty>();
     const methodReturnTypes = new Map<string, string>();
+    const methodCandidates = new Map<string, JavaProperty[]>();
 
     if (declarationKeyword === "record") {
       const openParen = findNextToken(tokens, index + 2, "(");
@@ -211,6 +214,16 @@ function parseJavaSource(
         });
       } else {
         methodReturnTypes.set(member.name, member.returnType);
+        const candidates = methodCandidates.get(member.name) ?? [];
+        candidates.push({
+          name: member.name,
+          typeName: member.returnType,
+          uri,
+          position: positionAt(source, tokens[member.nameTokenIndex].start),
+          renameable: true,
+          parameterCount: member.parameters.length
+        });
+        methodCandidates.set(member.name, candidates);
         const getterProperty = getterPropertyName(member.name);
         if (getterProperty && member.returnType !== "void" && !properties.has(getterProperty)) {
           properties.set(getterProperty, {
@@ -221,6 +234,13 @@ function parseJavaSource(
             renameable: false
           });
         }
+      }
+    }
+
+    const methodDefinitions = new Map<string, JavaProperty>();
+    for (const [name, candidates] of methodCandidates) {
+      if (candidates.length === 1 && candidates[0]) {
+        methodDefinitions.set(name, candidates[0]);
       }
     }
 
@@ -247,6 +267,7 @@ function parseJavaSource(
       position: positionAt(source, nameToken.start),
       properties,
       methodReturnTypes,
+      methodDefinitions,
       typeParameters,
       superClassName,
       superTypeNames

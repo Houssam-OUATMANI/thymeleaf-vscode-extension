@@ -18,12 +18,13 @@ import {
 import {
   provideDefinition,
   provideHover,
+  provideTypeDefinition,
   provideReferences,
   prepareThymeleafRename,
   provideThymeleafRenameEdits
 } from "../server/features/navigationProvider";
 import { findEnclosingLoopVariables } from "../server/features/featureUtils";
-import { ProjectIndex } from "../server/projectIndex";
+import { parsePropertiesFile, ProjectIndex } from "../server/projectIndex";
 
 test("navigates from a Thymeleaf model property to its Java declaration", async () => {
   const fixture = await createFixture();
@@ -37,6 +38,165 @@ test("navigates from a Thymeleaf model property to its Java declaration", async 
     assert.equal(definition.range.start.line, 2);
   } finally {
     await fixture.dispose();
+  }
+});
+
+test("navigates and hovers the exact member under the cursor in nested Java expressions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-nested-navigation-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const modelPath = path.join(java, "User.java");
+  const templatePath = path.join(templates, "home.html");
+  const model = `package demo;
+class User {
+  Address address;
+  Page<Post> page;
+}
+class Address {
+  String city;
+}
+class Post {}
+interface Slice<T> {
+  boolean isLast();
+}
+interface Page<T> extends Slice<T> {}
+`;
+  const controller = `package demo;
+@Controller class HomeController {
+  @GetMapping("/")
+  String home(Model model) {
+    model.addAttribute("user", new User());
+    return "home";
+  }
+}
+`;
+  const template = `<span th:text="\${user.address.city}"></span>
+<span th:text="\${user.page.isLast()}"></span>`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(modelPath, model),
+      writeFile(path.join(java, "HomeController.java"), controller),
+      writeFile(templatePath, template)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+
+    const addressOffset = template.indexOf("address");
+    const addressDefinition = provideDefinition(
+      document,
+      document.positionAt(addressOffset + 2),
+      index
+    );
+    assert.ok(addressDefinition);
+    assert.equal(addressDefinition.uri, pathToFileURL(modelPath).toString());
+    assert.equal(addressDefinition.range.start.line, 2);
+
+    const addressHover = provideHover(document, document.positionAt(addressOffset + 2), index);
+    assert.ok(addressHover);
+    assert.match(addressHover.contents.value, /\*\*address\*\*: `Address`/);
+    const addressTypeDefinition = provideTypeDefinition(
+      document,
+      document.positionAt(addressOffset + 2),
+      index
+    );
+    assert.ok(addressTypeDefinition);
+    assert.equal(addressTypeDefinition.range.start.line, 5);
+
+    const pageOffset = template.indexOf("page.isLast");
+    const pageTypeDefinition = provideTypeDefinition(
+      document,
+      document.positionAt(pageOffset + 1),
+      index
+    );
+    assert.ok(pageTypeDefinition);
+    assert.equal(pageTypeDefinition.range.start.line, 12);
+
+    const modelOffset = template.indexOf("user") + 1;
+    const modelTypeDefinition = provideTypeDefinition(
+      document,
+      document.positionAt(modelOffset),
+      index
+    );
+    assert.ok(modelTypeDefinition);
+    assert.equal(modelTypeDefinition.range.start.line, 1);
+
+    const methodOffset = template.indexOf("isLast");
+    const methodDefinition = provideDefinition(
+      document,
+      document.positionAt(methodOffset + 2),
+      index
+    );
+    assert.ok(methodDefinition);
+    assert.equal(methodDefinition.uri, pathToFileURL(modelPath).toString());
+    assert.equal(methodDefinition.range.start.line, 10);
+
+    const methodHover = provideHover(document, document.positionAt(methodOffset + 2), index);
+    assert.ok(methodHover);
+    assert.match(methodHover.contents.value, /\*\*isLast\(\)\*\*: `boolean`/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("parses escaped keys, whitespace separators, unicode and continued property values", () => {
+  const properties = [
+    "welcome.title=Hello\\ World",
+    "escaped\\:key : value",
+    "spaced key value",
+    "unicode=\\u0048ello",
+    "continued=first\\",
+    "    second",
+    "welcome.title=Overridden"
+  ].join("\n");
+
+  assert.deepEqual(
+    parsePropertiesFile(properties, "file:///messages.properties").map(({ key, value }) => [key, value]),
+    [
+      ["welcome.title", "Overridden"],
+      ["escaped:key", "value"],
+      ["spaced", "key value"],
+      ["unicode", "Hello"],
+      ["continued", "firstsecond"]
+    ]
+  );
+});
+
+test("keeps same-named templates from multiple workspace roots without choosing arbitrarily", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-multi-root-"));
+  const roots = ["first", "second"].map((name) => path.join(root, name));
+
+  try {
+    await Promise.all(roots.map(async (workspaceRoot, index) => {
+      const packageName = index === 0 ? "firstapp" : "secondapp";
+      const templates = path.join(workspaceRoot, "src", "main", "resources", "templates");
+      const java = path.join(workspaceRoot, "src", "main", "java", packageName);
+      await Promise.all([
+        mkdir(templates, { recursive: true }),
+        mkdir(java, { recursive: true })
+      ]);
+      await Promise.all([
+        writeFile(path.join(templates, "home.html"), `<span th:text="\${user.name}"></span>`),
+        writeFile(path.join(java, "User.java"), `package ${packageName}; class User { String name; }`)
+      ]);
+    }));
+
+    const index = new ProjectIndex();
+    await index.refresh(roots.map((workspaceRoot) => pathToFileURL(workspaceRoot).toString()));
+
+    assert.equal(index.templates.length, 2);
+    assert.equal(index.findTemplate("home"), undefined);
+    assert.equal(index.findClass("User"), undefined);
+    assert.equal(index.findClass("firstapp.User")?.name, "User");
+    assert.equal(index.findClass("secondapp.User")?.name, "User");
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -133,6 +293,36 @@ test("does not choose an arbitrary model type when multiple handlers share a vie
   }
 });
 
+test("completes fragment paths and fragment names from the indexed template", async () => {
+  const fixture = await createFixture();
+  try {
+    const pathText = `<div th:replace="~{frag"></div>`;
+    const pathDocument = TextDocument.create(fixture.templateUri, "html", 1, pathText);
+    const pathCompletions = provideCompletions(
+      pathDocument,
+      pathDocument.positionAt(pathText.indexOf("frag") + "frag".length),
+      fixture.index
+    );
+    assert.ok(pathCompletions.some(({ label }) => label === "fragments/header"));
+
+    const fragmentText = `<div th:replace="~{fragments/header :: na"></div>`;
+    const fragmentDocument = TextDocument.create(
+      fixture.templateUri,
+      "html",
+      1,
+      fragmentText
+    );
+    const fragmentCompletions = provideCompletions(
+      fragmentDocument,
+      fragmentDocument.positionAt(fragmentText.indexOf("na") + 2),
+      fixture.index
+    );
+    assert.ok(fragmentCompletions.some(({ label }) => label === "nav"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("renames a resolved Java model property across exact Thymeleaf member ranges", async () => {
   const fixture = await createFixture();
   try {
@@ -195,6 +385,68 @@ test("renames a resolved Java model property across exact Thymeleaf member range
     );
     assert.ok(javaRenameInfo);
     assert.equal(javaRenameInfo.placeholder, "displayName");
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("renames Java methods and their Thymeleaf invocations when the target is source-defined", async () => {
+  const fixture = await createFixture();
+  try {
+    const originalModel = await readFile(fixture.modelPath, "utf8");
+    const modelSource = originalModel.replace(
+      /\}\s*$/,
+      "  public String formatName() { return displayName; }\n}"
+    );
+    await writeFile(fixture.modelPath, modelSource);
+    const templatePath = path.join(
+      fixture.root,
+      "src",
+      "main",
+      "resources",
+      "templates",
+      "users",
+      "format.html"
+    );
+    const template = `<!--/*@thymesVar id="user" type="demo.UserForm"*/-->
+<span th:text="\${user.formatName()}"></span>`;
+    await writeFile(templatePath, template);
+    await fixture.index.refresh([pathToFileURL(fixture.root).toString()]);
+
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+    const methodOffset = template.indexOf("formatName");
+    const renameInfo = prepareThymeleafRename(
+      document,
+      document.positionAt(methodOffset + 2),
+      fixture.index
+    );
+    assert.ok(renameInfo);
+    assert.equal(renameInfo.placeholder, "formatName");
+
+    const edits = provideThymeleafRenameEdits(
+      renameInfo.javaUri,
+      renameInfo.javaPosition,
+      "displayLabel",
+      fixture.index
+    );
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0]?.uri, pathToFileURL(templatePath).toString());
+    assert.equal(document.getText(edits[0]?.range), "formatName");
+
+    const javaDocument = TextDocument.create(
+      pathToFileURL(fixture.modelPath).toString(),
+      "java",
+      1,
+      modelSource
+    );
+    const declarationOffset = modelSource.lastIndexOf("formatName");
+    const javaRenameInfo = prepareThymeleafRename(
+      javaDocument,
+      javaDocument.positionAt(declarationOffset + 2),
+      fixture.index
+    );
+    assert.ok(javaRenameInfo);
+    assert.equal(javaRenameInfo.placeholder, "formatName");
   } finally {
     await fixture.dispose();
   }
@@ -302,6 +554,66 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
     assert.equal(index.modelAttributesForTemplate("remote").has("remoteRows"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("navigates to inherited dependency methods and completes no-argument methods", async () => {
+  const fixture = await createFixture();
+  try {
+    fixture.index.addCompilerJavaTypes([
+      {
+        alias: "Page",
+        name: "Page",
+        uri: "jdt://contents/spring-data/Page.class",
+        position: { line: 0, character: 20 },
+        typeParameters: ["T"],
+        superTypeNames: ["Slice<T>"],
+        properties: [],
+        methods: []
+      },
+      {
+        alias: "Slice",
+        name: "Slice",
+        uri: "jdt://contents/spring-data/Slice.class",
+        position: { line: 0, character: 21 },
+        typeParameters: ["T"],
+        properties: [],
+        methods: [{
+          name: "isLast",
+          returnType: "boolean",
+          parameterCount: 0,
+          position: { line: 18, character: 13 }
+        }]
+      }
+    ]);
+
+    const template = `<span th:text="\${ps.isLast()}"></span>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+    const methodOffset = template.indexOf("isLast");
+    const definition = provideDefinition(
+      document,
+      document.positionAt(methodOffset + 2),
+      fixture.index
+    );
+    assert.ok(definition);
+    assert.equal(definition.uri, "jdt://contents/spring-data/Slice.class");
+    assert.deepEqual(definition.range.start, { line: 18, character: 13 });
+
+    const completionTemplate = `<span th:text="\${ps.}"></span>`;
+    const completionDocument = TextDocument.create(
+      fixture.templateUri,
+      "html",
+      1,
+      completionTemplate
+    );
+    const completions = provideCompletions(
+      completionDocument,
+      completionDocument.positionAt(completionTemplate.indexOf("ps.") + 3),
+      fixture.index
+    );
+    assert.ok(completions.some(({ label }) => label === "isLast()"));
+  } finally {
+    await fixture.dispose();
   }
 });
 
@@ -676,11 +988,13 @@ test("completes model properties and reports template/model errors", async () =>
     );
     assert.ok(completions.some(({ label }) => label === "displayName"));
 
-    const brokenTemplate = `<p th:text="\${user.badName}"></p><tr th:each="p: \${ps}"><td th:text="\${p.badName}"></td></tr><p th:tex="text"></p><div th:replace="~{missing :: absent}"></div><a th:href="@{/missing}"></a><a th:href="@{/missing.css}"></a><link rel="stylesheet" th:href="@{/css/bundle.css}">`;
+    const brokenTemplate = `<p th:text="\${user.badName}"></p><p th:class="\${user.badClass}"></p><tr th:each="p: \${ps}"><td th:text="\${p.badName}"></td></tr><p th:tex="text"></p><div th:replace="~{missing :: absent}"></div><a th:href="@{/missing}"></a><a th:href="@{/missing.css}"></a><link rel="stylesheet" th:href="@{/css/bundle.css}">`;
     const brokenDocument = TextDocument.create(fixture.templateUri, "html", 2, brokenTemplate);
     const diagnostics = validateDocument(brokenDocument, fixture.index, DEFAULT_SETTINGS);
     assert.ok(diagnostics.some(({ code }) => code === "unknown-attribute"));
-    assert.ok(diagnostics.some(({ code }) => code === "unknown-model-property"));
+    assert.ok(diagnostics.some(({ code, message }) =>
+      code === "unknown-model-property" && message.includes("'badClass'")
+    ));
     assert.ok(diagnostics.some(({ code }) => code === "missing-template"));
     assert.deepEqual(
       diagnostics.filter(({ code }) => code === "missing-route").map(({ message }) => message),
@@ -867,6 +1181,24 @@ test("completes properties for model values returned by a repository call", asyn
 
     assert.ok(completions.some(({ label }) => label === "id"));
     assert.ok(completions.some(({ label }) => label === "title"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("completes selection-expression properties from th:object context", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<form th:object="\${user}"><input th:field="*{dis}"></form>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const offset = text.indexOf("*{dis") + "*{dis".length;
+    const completions = provideCompletions(
+      document,
+      document.positionAt(offset),
+      fixture.index
+    );
+
+    assert.ok(completions.some(({ label }) => label === "displayName"));
   } finally {
     await fixture.dispose();
   }

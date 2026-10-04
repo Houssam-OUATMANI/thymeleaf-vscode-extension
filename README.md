@@ -11,11 +11,12 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 ## Features
 
 - Prioritized completion for Thymeleaf attributes, expressions, model properties, `th:each` variables, templates, fragments, and controller routes.
-- Go to Definition between Thymeleaf expressions and Java model properties, controller routes, view names, templates, and fragments.
+- Contextual completion for model and selection expressions, including properties and no-argument Java methods inherited from indexed classes and interfaces.
+- Go to Definition and Go to Type Definition for Thymeleaf expressions, Java model properties and methods, controller routes, view names, templates, and fragments.
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
 - Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
-- Hover information, references, and semantic coloring for resolved Java-backed model properties and methods.
+- Quick documentation, references, and semantic coloring for resolved Java-backed model properties and methods.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 
 ## Requirements
@@ -48,9 +49,9 @@ Thymeleaf template paths are relative to the configured template directories and
 
 The extension indexes common Spring MVC `@Controller` and `@RestController` mappings, static view-name returns, model values supplied through `Model.addAttribute`, `@ModelAttribute`, and Java fields, getters, and record components. It infers model types from direct service or repository calls as well as chained calls, and follows generic types inherited through classes and interfaces when those types are available from project sources or the Java language server. It follows common collection types and simple generic types, including nested controller types. A `th:each` variable is available throughout its element, including in attributes written before `th:each` in the same opening tag.
 
-With the Java language server active, external Java types are resolved through JDTLS definitions and document symbols against the imported project's classpath. Those symbols can contribute to completion, diagnostics, navigation, and semantic coloring. Rename combines Java references from the Java language server with resolved Thymeleaf property references.
+With the Java language server active, external Java and JDK types are resolved through JDTLS definitions and document symbols against the imported project's classpath. Those symbols can contribute to completion, diagnostics, type navigation, method navigation (including inherited interface methods), and semantic coloring. Rename combines Java references from the Java language server with resolved Thymeleaf property and source-method references. Rename is not offered for dependency/library methods. Duplicate template names or Java simple type names across workspace roots are kept indexed but are not resolved arbitrarily by name.
 
-The Spring handler and model association still uses source-based analysis. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, inherited dependency members, dynamic mappings, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type.
+The Spring handler and model association still uses source-based analysis. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, dynamic mappings, overloaded methods, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type. Message bundles support Java `.properties` separators, escaped keys/values, Unicode escapes, and continued lines.
 
 ## Development
 
