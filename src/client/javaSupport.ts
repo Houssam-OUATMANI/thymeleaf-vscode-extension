@@ -54,6 +54,13 @@ interface JavaSymbolLike {
   readonly location?: unknown;
 }
 
+interface CompilerResolutionStats {
+  definitionMisses: number;
+  symbolMisses: number;
+  typeSymbolMisses: number;
+  resolutionErrors: number;
+}
+
 const NON_RESOLVABLE_TYPES = new Set([
   "boolean", "byte", "char", "short", "int", "long", "float", "double", "void"
 ]);
@@ -93,6 +100,7 @@ export function registerJavaSupport(
     "thymeleaf/javaTypeReferences",
     (references: readonly JavaTypeReference[]) => {
       latestReferences = references;
+      output.appendLine(`Received ${references.length} Java type references from the Thymeleaf index.`);
       void resolveCompilerTypes(references).catch((error: unknown) => {
         output.appendLine(`Java compiler symbol indexing failed: ${formatError(error)}`);
       });
@@ -307,12 +315,25 @@ export function registerJavaSupport(
       if (!relevantTypes.has(resolutionKey)) relevantTypes.set(resolutionKey, reference);
     }
     const relevant = [...relevantTypes.values()];
+    const stats: CompilerResolutionStats = {
+      definitionMisses: 0,
+      symbolMisses: 0,
+      typeSymbolMisses: 0,
+      resolutionErrors: 0
+    };
     await runWithConcurrency(relevant, 6, async (reference) => {
       const key = typeReferenceKey(reference);
       let hierarchy = resolvedHierarchies.get(key);
       if (!hierarchy) {
-        hierarchy = await resolveCompilerTypeHierarchy(api, reference);
-        resolvedHierarchies.set(key, hierarchy);
+        try {
+          hierarchy = await resolveCompilerTypeHierarchy(api, reference, stats);
+          resolvedHierarchies.set(key, hierarchy);
+        } catch (error) {
+          stats.resolutionErrors += 1;
+          output.appendLine(
+            `Could not resolve Java symbols for ${reference.typeName}: ${formatError(error)}`
+          );
+        }
       }
     });
     const uniqueTypes = new Map<string, CompilerJavaType>();
@@ -324,12 +345,19 @@ export function registerJavaSupport(
     if (uniqueTypes.size > 0) {
       await client.sendNotification("thymeleaf/javaCompilerTypes", [...uniqueTypes.values()]);
     }
+    output.appendLine(
+      `Java symbol bridge resolved ${uniqueTypes.size} compiler types from ${references.length} references ` +
+      `(${relevant.length} lookups; ${stats.definitionMisses} definition misses, ` +
+      `${stats.symbolMisses} unreadable symbol documents, ${stats.typeSymbolMisses} unmatched type symbols, ` +
+      `${stats.resolutionErrors} request errors).`
+    );
   }
 }
 
 async function resolveCompilerTypeHierarchy(
   api: JavaExtensionApi,
   reference: JavaTypeReference,
+  stats: CompilerResolutionStats,
   visited = new Set<string>(),
   depth = 0
 ): Promise<{ readonly reference: JavaTypeReference; readonly type: CompilerJavaType }[]> {
@@ -337,14 +365,14 @@ async function resolveCompilerTypeHierarchy(
   if (visited.has(key) || depth >= 12) return [];
   visited.add(key);
 
-  const type = await resolveCompilerType(api, reference);
+  const type = await resolveCompilerType(api, reference, stats);
   if (!type) return [];
   const resolved = [{ reference, type }];
   if (!type.superTypeNames?.length) return resolved;
 
   const superReferences = await resolveCompilerSuperTypeReferences(type, reference);
   for (const superReference of superReferences) {
-    resolved.push(...await resolveCompilerTypeHierarchy(api, superReference, visited, depth + 1));
+    resolved.push(...await resolveCompilerTypeHierarchy(api, superReference, stats, visited, depth + 1));
   }
   return resolved;
 }
@@ -411,22 +439,32 @@ async function documentFromUri(uri: vscode.Uri): Promise<vscode.TextDocument> {
 
 async function resolveCompilerType(
   api: JavaExtensionApi,
-  reference: JavaTypeReference
+  reference: JavaTypeReference,
+  stats: CompilerResolutionStats
 ): Promise<CompilerJavaType | undefined> {
   const definitions = normalizeDefinitions(await api.goToDefinition({
     textDocument: { uri: reference.uri },
     position: reference.position
   }));
-  if (definitions.length !== 1) return undefined;
+  if (definitions.length !== 1) {
+    stats.definitionMisses += 1;
+    return undefined;
+  }
   const definition = definitions[0];
   if (!definition) return undefined;
 
   const symbols = normalizeSymbols(await api.getDocumentSymbols({
     textDocument: { uri: definition.uri.toString() }
   }));
+  if (symbols.length === 0) {
+    stats.symbolMisses += 1;
+    return undefined;
+  }
   const targetName = reference.typeName.split(".").at(-1) ?? reference.typeName;
   const typeCandidates = flattenSymbols(symbols).filter(({ name, kind }) =>
-    name === targetName && isClassSymbolKind(kind)
+    typeof name === "string" &&
+    simpleJavaTypeName(name) === simpleJavaTypeName(targetName) &&
+    isClassSymbolKind(kind)
   );
   const matchingCandidates = typeCandidates.filter((candidate) => {
     const range = getSymbolRange(candidate.range);
@@ -435,21 +473,31 @@ async function resolveCompilerType(
   const typeSymbol = matchingCandidates.length === 1
     ? matchingCandidates[0]
     : typeCandidates.length === 1 ? typeCandidates[0] : undefined;
-  if (!typeSymbol) return undefined;
+  if (!typeSymbol) {
+    stats.typeSymbolMisses += 1;
+    return undefined;
+  }
   const selectionRange = getSymbolRange(typeSymbol.selectionRange) ?? getSymbolRange(typeSymbol.range);
   if (!selectionRange) return undefined;
   const typeDetail = getString(typeSymbol.detail) ?? "";
-  const superClassName = /\bextends\s+([\w.$]+)/.exec(typeDetail)?.[1];
-  const superTypeNames = readCompilerSuperTypes(typeDetail);
-  const typeParameters = /<([^<>]+)>/.exec(typeDetail)?.[1]
-    ?.split(",")
-    .map((parameter) => parameter.trim().split(/\s+/)[0])
-    .filter((parameter): parameter is string => parameter !== undefined && /^[A-Za-z_$][\w$]*$/.test(parameter));
+  const typeDocument = await documentFromUri(definition.uri);
+  const declarationOffset = typeDocument.offsetAt(selectionRange.start);
+  const bodyStart = typeDocument.getText().indexOf("{", declarationOffset);
+  const declarationHeader = bodyStart < 0
+    ? typeDetail
+    : typeDocument.getText().slice(declarationOffset, bodyStart);
+  const superClassName = /\bextends\s+([\w.$]+)/.exec(declarationHeader)?.[1];
+  const superTypeNames = readCompilerSuperTypes(declarationHeader);
+  const typeParameters = readCompilerTypeParameters(declarationHeader) ??
+    readCompilerTypeParameters(typeDetail);
 
   const properties: CompilerJavaType["properties"][number][] = [];
   const methods: CompilerJavaType["methods"][number][] = [];
   for (const member of normalizeSymbols(typeSymbol.children)) {
-    const name = getString(member.name);
+    const symbolName = getString(member.name);
+    const name = symbolName && member.kind === vscode.SymbolKind.Method
+      ? symbolName.replace(/\s*\(.*$/, "")
+      : symbolName;
     const detail = getString(member.detail) ?? "";
     if (!name) continue;
     if (member.kind === vscode.SymbolKind.Field || member.kind === vscode.SymbolKind.Property) {
@@ -469,7 +517,9 @@ async function resolveCompilerType(
         methods.push({
           name,
           returnType,
-          parameterCount: getParameterCount(detail),
+          parameterCount: getParameterCount(symbolName ?? "") ??
+            getParameterCount(detail) ??
+            (range ? getSourceMethodParameterCount(typeDocument, range.start, name) : undefined),
           ...(range && { position: { line: range.start.line, character: range.start.character } })
         });
       }
@@ -478,7 +528,7 @@ async function resolveCompilerType(
 
   return {
     alias: reference.typeName,
-    name: getString(typeSymbol.name) ?? targetName,
+    name: simpleJavaTypeName(getString(typeSymbol.name) ?? targetName),
     uri: definition.uri.toString(),
     position: { line: selectionRange.start.line, character: selectionRange.start.character },
     ...(superClassName && { superClassName }),
@@ -519,8 +569,25 @@ function normalizeUri(value: unknown): vscode.Uri | undefined {
 
 function normalizeSymbols(value: unknown): JavaSymbolLike[] {
   return Array.isArray(value)
-    ? value.filter((symbol): symbol is JavaSymbolLike => isRecord(symbol))
+    ? value
+      .filter((symbol): symbol is JavaSymbolLike => isRecord(symbol))
+      .map((symbol) => ({
+        ...symbol,
+        kind: normalizeProtocolSymbolKind(symbol.kind)
+      }))
     : [];
+}
+
+function normalizeProtocolSymbolKind(kind: unknown): unknown {
+  if (typeof kind !== "number" || !Number.isInteger(kind) || kind < 1 || kind > 26) {
+    return kind;
+  }
+  // JDTLS returns LSP SymbolKind values, which are one-based unlike VS Code's enum.
+  return kind - 1;
+}
+
+function simpleJavaTypeName(name: string): string {
+  return (name.split("<", 1)[0] ?? name).trim();
 }
 
 function flattenSymbols(symbols: readonly JavaSymbolLike[]): JavaSymbolLike[] {
@@ -564,10 +631,65 @@ function symbolType(detail: string, method: boolean): string | undefined {
 }
 
 function getParameterCount(detail: string): number | undefined {
-  const signature = /\(([^()]*)\)/.exec(detail)?.[1];
-  if (signature === undefined) return undefined;
-  if (!signature.trim()) return 0;
-  return signature.split(",").length;
+  const openParen = detail.indexOf("(");
+  if (openParen < 0) return undefined;
+  const closeParen = findClosingParen(detail, openParen);
+  if (closeParen < 0) return undefined;
+  return countJavaParameters(detail.slice(openParen + 1, closeParen));
+}
+
+function getSourceMethodParameterCount(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  methodName: string
+): number | undefined {
+  const source = document.getText();
+  const nameEnd = document.offsetAt(position) + methodName.length;
+  const openParen = source.indexOf("(", nameEnd);
+  if (openParen < 0 || source.slice(nameEnd, openParen).trim()) return undefined;
+  const closeParen = findClosingParen(source, openParen);
+  return closeParen < 0
+    ? undefined
+    : countJavaParameters(source.slice(openParen + 1, closeParen));
+}
+
+function findClosingParen(source: string, openParen: number): number {
+  let depth = 0;
+  for (let index = openParen; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")" && --depth === 0) return index;
+  }
+  return -1;
+}
+
+function countJavaParameters(parameters: string): number {
+  if (!parameters.trim()) return 0;
+  let count = 1;
+  let angleDepth = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: "'" | '"' | undefined;
+  for (let index = 0; index < parameters.length; index += 1) {
+    const character = parameters[index];
+    if (quote) {
+      if (character === quote && parameters[index - 1] !== "\\") quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "<") angleDepth += 1;
+    else if (character === ">") angleDepth -= 1;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth -= 1;
+    else if (character === "[") bracketDepth += 1;
+    else if (character === "]") bracketDepth -= 1;
+    else if (
+      character === "," &&
+      angleDepth === 0 &&
+      parenDepth === 0 &&
+      bracketDepth === 0
+    ) count += 1;
+  }
+  return count;
 }
 
 function readCompilerSuperTypes(detail: string): string[] {
@@ -589,6 +711,7 @@ function readCompilerSuperTypes(detail: string): string[] {
         if (typeName) superTypes.push(typeName);
         start = index + 1;
       }
+
     }
   };
 
@@ -607,6 +730,40 @@ function readCompilerSuperTypes(detail: string): string[] {
   }
   if (collecting) addClause(detail.length);
   return superTypes;
+}
+
+function readCompilerTypeParameters(declaration: string): string[] | undefined {
+  const declarationMatch = /\b(?:class|interface|record|enum)\s+[\w$]+\s*<|^\s*[\w$]+\s*</
+    .exec(declaration);
+  if (!declarationMatch) return undefined;
+  const openAngle = declaration.indexOf("<", declarationMatch.index);
+  let depth = 0;
+  let closeAngle = -1;
+  for (let index = openAngle; index < declaration.length; index += 1) {
+    if (declaration[index] === "<") depth += 1;
+    else if (declaration[index] === ">" && --depth === 0) {
+      closeAngle = index;
+      break;
+    }
+  }
+  if (closeAngle < 0) return undefined;
+  const parameters: string[] = [];
+  let start = openAngle + 1;
+  depth = 0;
+  for (let index = start; index < closeAngle; index += 1) {
+    if (declaration[index] === "<") depth += 1;
+    else if (declaration[index] === ">") depth -= 1;
+    else if (declaration[index] === "," && depth === 0) {
+      parameters.push(declaration.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parameters.push(declaration.slice(start, closeAngle).trim());
+  return parameters
+    .map((parameter) => parameter.split(/\s+/)[0])
+    .filter((parameter): parameter is string =>
+      parameter !== undefined && /^[A-Za-z_$][\w$]*$/.test(parameter)
+    );
 }
 
 function typeReferenceKey(reference: JavaTypeReference): string {

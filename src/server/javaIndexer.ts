@@ -14,6 +14,11 @@ export interface JavaProperty {
   readonly parameterCount?: number;
 }
 
+export interface JavaMethodSignature {
+  readonly typeName: string;
+  readonly parameterCount?: number;
+}
+
 export interface JavaClass {
   readonly name: string;
   readonly qualifiedName: string;
@@ -22,6 +27,7 @@ export interface JavaClass {
   readonly properties: ReadonlyMap<string, JavaProperty>;
   readonly methodReturnTypes: ReadonlyMap<string, string>;
   readonly methodDefinitions: ReadonlyMap<string, JavaProperty>;
+  readonly methodSignatures?: ReadonlyMap<string, readonly JavaMethodSignature[]>;
   readonly typeParameters?: readonly string[];
   readonly superClassName?: string;
   readonly superTypeNames?: readonly string[];
@@ -213,7 +219,6 @@ function parseJavaSource(
           renameable: true
         });
       } else {
-        methodReturnTypes.set(member.name, member.returnType);
         const candidates = methodCandidates.get(member.name) ?? [];
         candidates.push({
           name: member.name,
@@ -234,6 +239,13 @@ function parseJavaSource(
             renameable: false
           });
         }
+      }
+    }
+
+    for (const [name, candidates] of methodCandidates) {
+      const returnTypes = new Set(candidates.map(({ typeName }) => typeName));
+      if (returnTypes.size === 1 && candidates[0]) {
+        methodReturnTypes.set(name, candidates[0].typeName);
       }
     }
 
@@ -268,6 +280,15 @@ function parseJavaSource(
       properties,
       methodReturnTypes,
       methodDefinitions,
+      methodSignatures: new Map(
+        [...methodCandidates].map(([name, candidates]) => [
+          name,
+          candidates.map(({ typeName, parameterCount }) => ({
+            typeName,
+            ...(parameterCount !== undefined && { parameterCount })
+          }))
+        ])
+      ),
       typeParameters,
       superClassName,
       superTypeNames
@@ -917,8 +938,16 @@ export function inferModelExpressionType(
     if (isMethodCall) {
       const close = findMatching(tokens, tokenIndex, "(", ")");
       if (close < 0) return undefined;
+      const argumentCount = splitTopLevelArguments(
+        expression.slice(tokens[tokenIndex].end, tokens[close].start)
+      ).length;
       tokenIndex = close + 1;
-      const returnType = resolveMethodReturnType(typeName, member.text, classesByName);
+      const returnType = resolveMethodReturnType(
+        typeName,
+        member.text,
+        classesByName,
+        argumentCount
+      );
       if (!returnType) return undefined;
       typeName = returnType;
     } else {
@@ -961,18 +990,34 @@ function resolveMethodReturnType(
   typeName: string,
   methodName: string,
   classesByName: ReadonlyMap<string, JavaClass>,
+  parameterCount?: number,
   visited = new Set<string>()
 ): string | undefined {
   const javaClass = findClassByName(typeName, classesByName);
   if (!javaClass || visited.has(javaClass.qualifiedName)) return undefined;
   visited.add(javaClass.qualifiedName);
 
-  const ownReturnType = javaClass.methodReturnTypes.get(methodName);
+  const signatures = javaClass.methodSignatures?.get(methodName);
+  const matchingSignatures = parameterCount === undefined
+    ? signatures
+    : signatures?.filter(({ parameterCount: count }) => count === parameterCount);
+  const signatureReturnTypes = new Set(matchingSignatures?.map(({ typeName: result }) => result));
+  const ownReturnType = signatureReturnTypes?.size === 1
+    ? matchingSignatures?.[0]?.typeName
+    : signatures === undefined
+      ? javaClass.methodReturnTypes.get(methodName)
+      : undefined;
   if (ownReturnType) return substituteTypeParameters(ownReturnType, javaClass, typeName);
 
   for (const superType of getSuperTypeNames(javaClass)) {
     const resolvedSuperType = substituteTypeParameters(superType, javaClass, typeName);
-    const returnType = resolveMethodReturnType(resolvedSuperType, methodName, classesByName, visited);
+    const returnType = resolveMethodReturnType(
+      resolvedSuperType,
+      methodName,
+      classesByName,
+      parameterCount,
+      visited
+    );
     if (returnType) return returnType;
   }
   return undefined;

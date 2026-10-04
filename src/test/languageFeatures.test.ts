@@ -608,17 +608,31 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
       position: { line: 0, character: 10 },
       properties: [],
       methods: [],
-      superTypeNames: ["RemoteCrudRepository<RemoteDto>"]
+      superTypeNames: ["RemoteJpaRepository<RemoteDto, UUID>"]
+    }, {
+      alias: "RemoteJpaRepository",
+      name: "RemoteJpaRepository",
+      uri: "jdt://contents/dependency.jar/demo/RemoteJpaRepository.class",
+      position: { line: 0, character: 10 },
+      typeParameters: ["T", "ID"],
+      properties: [],
+      methods: [{
+        name: "findAll",
+        returnType: "List<S>",
+        parameterCount: 1
+      }],
+      superTypeNames: ["RemoteCrudRepository<T, ID>"]
     }, {
       alias: "RemoteCrudRepository",
       name: "RemoteCrudRepository",
       uri: "jdt://contents/dependency.jar/demo/RemoteCrudRepository.class",
       position: { line: 0, character: 10 },
-      typeParameters: ["T"],
+      typeParameters: ["T", "ID"],
       properties: [],
       methods: [{
         name: "findAll",
-        returnType: "List<T>"
+        returnType: "List<T>",
+        parameterCount: 0
       }]
     }]);
 
@@ -768,6 +782,14 @@ test("finds template references from a Java model property", async () => {
 test("completes and navigates collection loop variables back to their Java model", async () => {
   const fixture = await createFixture();
   try {
+    fixture.index.addCompilerJavaTypes([{
+      alias: "Post",
+      name: "Post",
+      uri: pathToFileURL(fixture.postPath).toString(),
+      position: { line: 1, character: 6 },
+      properties: [],
+      methods: []
+    }]);
     const document = TextDocument.create(fixture.templateUri, "html", 1, fixture.template);
     const propertyOffset = fixture.template.indexOf("${p.");
     const completions = provideCompletions(

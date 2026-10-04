@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 - Contextual completion for `*{...}` selection expressions using the enclosing `th:object`.
 - Trigger Thymeleaf attribute completion after whitespace and replace partial attribute prefixes precisely.
 - Infer model collection types from `List.of`, `Set.of`, `Collection.of`, and `Arrays.asList` controller expressions.
+- Resolve overloaded generic repository methods by argument count and preserve class type parameters across Spring Data inheritance.
 
 ### Fixed
 

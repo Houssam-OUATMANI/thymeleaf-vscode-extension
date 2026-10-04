@@ -6,6 +6,7 @@ import {
   inferModelExpressionType,
   indexJavaSources,
   JavaClass,
+  JavaMethodSignature,
   JavaProperty,
   JavaTypeReference,
   SourcePosition,
@@ -99,7 +100,7 @@ export class ProjectIndex {
   public addCompilerJavaTypes(types: readonly CompilerJavaType[]): void {
     for (const type of types) {
       const sourceClass = this.classesByName.get(type.name) ?? this.classesByName.get(type.alias);
-      const properties = new Map<string, JavaProperty>();
+      const properties = new Map<string, JavaProperty>(sourceClass?.properties);
       for (const property of type.properties) {
         properties.set(property.name, {
           ...property,
@@ -113,8 +114,18 @@ export class ProjectIndex {
         returns.add(method.returnType);
         methodReturns.set(method.name, returns);
       }
-      const methodReturnTypes = new Map<string, string>();
+      const methodReturnTypes = new Map<string, string>(sourceClass?.methodReturnTypes);
+      const methodSignatures = new Map<string, JavaMethodSignature[]>(
+        [...(sourceClass?.methodSignatures ?? new Map())]
+          .map(([name, signatures]) => [name, [...signatures]])
+      );
       for (const method of type.methods) {
+        const signatures = methodSignatures.get(method.name) ?? [];
+        signatures.push({
+          typeName: method.returnType,
+          ...(method.parameterCount !== undefined && { parameterCount: method.parameterCount })
+        });
+        methodSignatures.set(method.name, signatures);
         const returns = methodReturns.get(method.name);
         if (!returns || returns.size !== 1) continue;
         methodReturnTypes.set(method.name, method.returnType);
@@ -129,7 +140,7 @@ export class ProjectIndex {
           ...(method.parameterCount !== undefined && { parameterCount: method.parameterCount })
         });
       }
-      const methodDefinitions = new Map<string, JavaProperty>();
+      const methodDefinitions = new Map<string, JavaProperty>(sourceClass?.methodDefinitions);
       const methodsByName = new Map<string, NonNullable<CompilerJavaType["methods"][number]>[]>();
       for (const method of type.methods) {
         if (!method.position) continue;
@@ -152,13 +163,14 @@ export class ProjectIndex {
         });
       }
       const javaClass: JavaClass = {
-        name: type.name,
-        qualifiedName: type.name,
+        name: sourceClass?.name ?? type.name,
+        qualifiedName: sourceClass?.qualifiedName ?? type.name,
         uri: type.uri,
         position: type.position,
         properties,
         methodReturnTypes,
         methodDefinitions,
+        methodSignatures,
         ...((type.typeParameters ?? sourceClass?.typeParameters) && {
           typeParameters: type.typeParameters ?? sourceClass?.typeParameters
         }),
@@ -521,17 +533,32 @@ export class ProjectIndex {
   private findInheritedMethodReturnType(
     typeName: string,
     methodName: string,
-    visited: Set<string>
+    visited: Set<string>,
+    parameterCount?: number
   ): string | undefined {
     const currentClass = this.findClass(typeName);
     if (!currentClass || visited.has(currentClass.qualifiedName)) return undefined;
     visited.add(currentClass.qualifiedName);
 
-    const returnType = currentClass.methodReturnTypes.get(methodName);
+    const signatures = currentClass.methodSignatures?.get(methodName);
+    const matchingSignatures = parameterCount === undefined
+      ? signatures
+      : signatures?.filter(({ parameterCount: count }) => count === parameterCount);
+    const signatureReturnTypes = new Set(matchingSignatures?.map(({ typeName: result }) => result));
+    const returnType = signatureReturnTypes.size === 1
+      ? matchingSignatures?.[0]?.typeName
+      : signatures === undefined
+        ? currentClass.methodReturnTypes.get(methodName)
+        : undefined;
     if (returnType) return substituteTypeParameters(returnType, currentClass, typeName);
     for (const superType of superTypesForClass(currentClass)) {
       const resolvedSuperType = substituteTypeParameters(superType, currentClass, typeName);
-      const inherited = this.findInheritedMethodReturnType(resolvedSuperType, methodName, visited);
+      const inherited = this.findInheritedMethodReturnType(
+        resolvedSuperType,
+        methodName,
+        visited,
+        parameterCount
+      );
       if (inherited) return inherited;
     }
     return undefined;
