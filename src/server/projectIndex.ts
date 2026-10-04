@@ -70,6 +70,7 @@ const DEFAULT_TEMPLATE_LOCATIONS = ["src/main/resources/templates"];
 export class ProjectIndex {
   private templateByName = new Map<string, IndexedTemplate>();
   private templateByUri = new Map<string, IndexedTemplate>();
+  private openTemplateOverrides = new Map<string, IndexedTemplate>();
   private ambiguousTemplateNames = new Set<string>();
   private classesByName = new Map<string, JavaClass>();
   private ambiguousClassNames = new Set<string>();
@@ -82,7 +83,9 @@ export class ProjectIndex {
   private ambiguousCompilerAliases = new Set<string>();
 
   public get templates(): readonly IndexedTemplate[] {
-    return [...this.templateByUri.values()];
+    return [...this.templateByUri.values()].map((template) =>
+      this.openTemplateOverrides.get(fileUriKey(template.uri) ?? "") ?? template
+    );
   }
 
   public get javaClasses(): readonly JavaClass[] {
@@ -274,6 +277,7 @@ export class ProjectIndex {
 
     this.templateByName = templateByName;
     this.templateByUri = templateByUri;
+    this.openTemplateOverrides.clear();
     this.ambiguousTemplateNames = ambiguousTemplateNames;
     this.classesByName = classesByName;
     this.ambiguousClassNames = ambiguousClassNames;
@@ -290,14 +294,36 @@ export class ProjectIndex {
 
   public findTemplate(name: string): IndexedTemplate | undefined {
     const normalizedName = normalizeTemplateName(name);
-    return this.ambiguousTemplateNames.has(normalizedName)
-      ? undefined
-      : this.templateByName.get(normalizedName);
+    if (this.ambiguousTemplateNames.has(normalizedName)) return undefined;
+    const template = this.templateByName.get(normalizedName);
+    return template
+      ? this.openTemplateOverrides.get(fileUriKey(template.uri) ?? "") ?? template
+      : undefined;
   }
 
   public findTemplateByUri(uri: string): IndexedTemplate | undefined {
     const key = fileUriKey(uri);
-    return key ? this.templateByUri.get(key) : undefined;
+    return key
+      ? this.openTemplateOverrides.get(key) ?? this.templateByUri.get(key)
+      : undefined;
+  }
+
+  public updateOpenTemplate(uri: string, content: string): boolean {
+    const key = fileUriKey(uri);
+    const template = key ? this.findTemplateByUri(uri) : undefined;
+    if (!key || !template) return false;
+    this.openTemplateOverrides.set(key, {
+      ...template,
+      content,
+      fragments: findFragments(content),
+      thymesVars: findThymesVars(content)
+    });
+    return true;
+  }
+
+  public closeOpenTemplate(uri: string): void {
+    const key = fileUriKey(uri);
+    if (key) this.openTemplateOverrides.delete(key);
   }
 
   public getHandlersForTemplate(

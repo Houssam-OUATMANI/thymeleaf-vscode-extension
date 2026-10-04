@@ -104,13 +104,23 @@ connection.onDidChangeConfiguration((change) => {
 });
 
 documents.onDidOpen(({ document }) => {
-  scheduleIndexRefresh();
+  if (
+    document.languageId === "html" &&
+    !projectIndex.updateOpenTemplate(document.uri, document.getText())
+  ) {
+    scheduleIndexRefresh();
+  }
   validateAndPublish(document);
 });
 
 documents.onDidChangeContent(({ document }) => {
+  if (
+    document.languageId === "html" &&
+    !projectIndex.updateOpenTemplate(document.uri, document.getText())
+  ) {
+    scheduleIndexRefresh();
+  }
   validateAndPublish(document);
-  scheduleIndexRefresh();
 });
 
 documents.onDidSave(() => {
@@ -119,7 +129,7 @@ documents.onDidSave(() => {
 
 documents.onDidClose(({ document }) => {
   connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
-  scheduleIndexRefresh();
+  if (document.languageId === "html") projectIndex.closeOpenTemplate(document.uri);
 });
 
 connection.onDidChangeWatchedFiles(() => scheduleIndexRefresh());

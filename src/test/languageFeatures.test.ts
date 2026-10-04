@@ -414,6 +414,29 @@ test("completes fragment paths and fragment names from the indexed template", as
   }
 });
 
+test("updates open template fragments without replacing the indexed disk version", async () => {
+  const fixture = await createFixture();
+  try {
+    const editedTemplate = `<div th:fragment="editedPanel"></div>`;
+    assert.equal(
+      fixture.index.updateOpenTemplate(fixture.templateUri, editedTemplate),
+      true
+    );
+    assert.equal(fixture.index.findTemplateByUri(fixture.templateUri)?.content, editedTemplate);
+    assert.ok(fixture.index.findTemplateByUri(fixture.templateUri)?.fragments.some(
+      ({ name }) => name === "editedPanel"
+    ));
+
+    fixture.index.closeOpenTemplate(fixture.templateUri);
+    assert.equal(
+      fixture.index.findTemplateByUri(fixture.templateUri)?.content,
+      fixture.template
+    );
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("renames a resolved Java model property across exact Thymeleaf member ranges", async () => {
   const fixture = await createFixture();
   try {
