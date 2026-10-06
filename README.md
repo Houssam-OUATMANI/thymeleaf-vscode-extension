@@ -4,7 +4,25 @@
 
 Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed completion, navigation, diagnostics, and refactoring in Visual Studio Code.
 
+## In action
 
+| Thymeleaf attribute completion | Thymeleaf utility completion |
+| --- | --- |
+| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/th-suggest.png" alt="Completion suggestions for Thymeleaf attributes" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/thymeleaf-helpers.png" alt="Completion suggestions for Thymeleaf utility objects" width="100%"> |
+
+| Thymeleaf utility method completion | Java-backed model property completion |
+| --- | --- |
+| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/thymeleaf-helper-2.png" alt="Completion suggestions for Thymeleaf utility methods" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/suggestion.png" alt="Java-backed model property completion and hover documentation" width="100%"> |
+
+| Fragment completion | Java pagination model methods |
+| --- | --- |
+| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/fragment.png" alt="Completion suggestions for Thymeleaf fragments" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/pagination.png" alt="Completion suggestions for Java pagination model methods" width="100%"> |
+
+| Spring controller model indexing | Quick fix for a misspelled attribute |
+| --- | --- |
+| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/ctrl.png" alt="Spring controller model attributes recognized by the extension" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/fix.png" alt="Quick fix replacing a misspelled Thymeleaf attribute" width="100%"> |
+
+Screenshots are hosted in the repository and are not included in the extension package.
 
 ## Features
 

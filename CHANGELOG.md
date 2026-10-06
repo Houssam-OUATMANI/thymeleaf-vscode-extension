@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.1] - 2026-10-06
+
+### Added
+
+- Add README screenshots showing completion, Java-backed model support, and quick fixes.
+
+### Notes
+
+- Screenshots are linked from the repository and are not included in the VSIX package.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added

@@ -9,3 +9,4 @@ esbuild.config.cjs
 **/*.ts
 **/*.tsbuildinfo
 node_modules/**
+assets/**
