@@ -237,19 +237,28 @@ export function provideCompletions(
   if (isInsideTag(text, offset) && !isInsideAttributeValue(text, offset)) {
     const attributeContext = findAttributeNameContext(text, offset);
     if (!attributeContext) return [];
+    const isDataThAttribute = attributeContext.prefix.startsWith("data-th-");
+    const attributePrefix = isDataThAttribute
+      ? `th:${attributeContext.prefix.slice("data-th-".length)}`
+      : attributeContext.prefix;
     return prioritizeThymeleaf(THYMELEAF_ATTRIBUTES
-      .filter(({ name }) => name.startsWith(attributeContext.prefix))
-      .map(({ name, description, value }) => ({
-        label: name,
-        kind: CompletionItemKind.Property,
-        detail: value,
-        documentation: description,
-        textEdit: TextEdit.replace(
-          Range.create(document.positionAt(attributeContext.startOffset), position),
-          `${name}="$1"`
-        ),
-        insertTextFormat: 2
-      })));
+      .filter(({ name }) => name.startsWith(attributePrefix))
+      .map(({ name, description, value }) => {
+        const completionName = isDataThAttribute
+          ? `data-th-${name.slice("th:".length)}`
+          : name;
+        return {
+          label: completionName,
+          kind: CompletionItemKind.Property,
+          detail: value,
+          documentation: description,
+          textEdit: TextEdit.replace(
+            Range.create(document.positionAt(attributeContext.startOffset), position),
+            `${completionName}="$1"`
+          ),
+          insertTextFormat: 2
+        };
+      }));
   }
   return [];
 }

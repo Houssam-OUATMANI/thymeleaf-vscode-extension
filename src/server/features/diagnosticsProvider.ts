@@ -72,12 +72,15 @@ export function validateDocument(
       const name = attribute.name;
       if (isKnownAttribute(name)) continue;
       const suggestion = closestAttribute(name);
+      const displayedSuggestion = suggestion && attribute.sourceName.startsWith("data-th-")
+        ? `data-th-${suggestion.slice("th:".length)}`
+        : suggestion;
       diagnostics.push({
         range: rangeAtOffset(text, attribute.nameStart, attribute.nameEnd),
         severity: DiagnosticSeverity.Warning,
         code: "unknown-attribute",
         source: "Thymeleaf",
-        message: `Unknown Thymeleaf attribute '${name}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`
+        message: `Unknown Thymeleaf attribute '${attribute.sourceName}'.${displayedSuggestion ? ` Did you mean '${displayedSuggestion}'?` : ""}`
       });
     }
   }

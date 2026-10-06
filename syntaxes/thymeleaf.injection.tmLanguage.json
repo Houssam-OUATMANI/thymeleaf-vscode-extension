@@ -4,7 +4,7 @@
   "patterns": [
     {
       "name": "entity.other.attribute-name.thymeleaf.html",
-      "match": "\\b(?:th|sec|layout):[a-zA-Z][\\w-]*(?=\\s*=)"
+      "match": "\\b(?:data-th-|(?:th|sec|layout):)[a-zA-Z][\\w-]*(?=\\s*=)"
     },
     {
       "name": "meta.embedded.inline.thymeleaf",

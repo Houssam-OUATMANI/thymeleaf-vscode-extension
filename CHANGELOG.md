@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-10-06
+
+### Added
+
+- Support HTML5 `data-th-*` attribute aliases for Thymeleaf completion, navigation, diagnostics, and syntax highlighting.
+
+### Notes
+
+- Java source indexing refreshes when files are saved. With VS Code Auto Save enabled, Java changes are indexed automatically as they are saved.
+
 ## [0.2.0] - 2026-10-04
 
 ### Added

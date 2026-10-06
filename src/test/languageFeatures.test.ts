@@ -272,7 +272,8 @@ test("offers Thymeleaf attribute completion after a space and replaces partial p
     for (const [text, prefix, expected] of [
       ["<div ", "", "th:text"],
       ["<div th:t", "th:t", "th:text"],
-      ["<div\n  th:t", "th:t", "th:text"]
+      ["<div\n  th:t", "th:t", "th:text"],
+      ["<div data-th-t", "data-th-t", "data-th-text"]
     ] as const) {
       const document = TextDocument.create(fixture.templateUri, "html", 1, text);
       const completions = provideCompletions(
@@ -286,6 +287,31 @@ test("offers Thymeleaf attribute completion after a space and replaces partial p
         ? document.getText(completion.textEdit.range)
         : undefined, prefix);
     }
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("supports data-th attributes in diagnostics and model completion", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<span data-th-text="\${user.displayName}"></span><span data-th-tex="value"></span>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const completionOffset = text.indexOf("displayName") + "display".length;
+    const completions = provideCompletions(
+      document,
+      document.positionAt(completionOffset),
+      fixture.index
+    );
+    assert.ok(completions.some(({ label }) => label === "displayName"));
+
+    const diagnostics = validateDocument(document, fixture.index, DEFAULT_SETTINGS);
+    assert.ok(diagnostics.some(({ code, message }) =>
+      code === "unknown-attribute" &&
+      message.includes("'data-th-tex'") &&
+      message.includes("'data-th-text'")
+    ));
+    assert.ok(diagnostics.every(({ code }) => code !== "unknown-model-property"));
   } finally {
     await fixture.dispose();
   }

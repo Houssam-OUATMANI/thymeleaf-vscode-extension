@@ -1,5 +1,6 @@
 export interface ThymeleafHtmlAttribute {
   readonly name: string;
+  readonly sourceName: string;
   readonly nameStart: number;
   readonly nameEnd: number;
   readonly value: string;
@@ -96,9 +97,13 @@ function readTagAttributes(
       while (cursor < end && !/[\s>]/.test(text[cursor])) cursor += 1;
     }
 
-    if (name.startsWith("th:")) {
+    const canonicalName = name.startsWith("data-th-")
+      ? `th:${name.slice("data-th-".length)}`
+      : name;
+    if (canonicalName.startsWith("th:")) {
       attributes.push({
-        name,
+        name: canonicalName,
+        sourceName: name,
         nameStart,
         nameEnd,
         value: text.slice(valueStart, cursor),

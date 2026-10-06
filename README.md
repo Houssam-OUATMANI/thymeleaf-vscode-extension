@@ -16,6 +16,7 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
 - Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
+- Support for both standard `th:*` attributes and their HTML5 `data-th-*` equivalents, including completion, navigation, diagnostics, and syntax highlighting.
 
 ## Requirements
 
@@ -49,7 +50,7 @@ The extension indexes common Spring MVC `@Controller` and `@RestController` mapp
 
 With the Java language server active, external Java and JDK types are resolved through JDTLS definitions and document symbols against the imported project's classpath. Those symbols can contribute to completion, diagnostics, type navigation, method navigation (including inherited interface methods), and semantic coloring. Rename combines Java references from the Java language server with resolved Thymeleaf property and source-method references. Rename is not offered for dependency/library methods. Duplicate template names or Java simple type names across workspace roots are kept indexed but are not resolved arbitrarily by name.
 
-The Spring handler and model association still uses source-based analysis. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, dynamic mappings, overloaded methods, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type. Message bundles support Java `.properties` separators, escaped keys/values, Unicode escapes, and continued lines.
+The Spring handler and model association still uses source-based analysis. Java source indexing is refreshed when files are saved; with VS Code Auto Save enabled, changes are indexed automatically as they are saved. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, dynamic mappings, overloaded methods, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type. Message bundles support Java `.properties` separators, escaped keys/values, Unicode escapes, and continued lines.
 
 ## Development
 
