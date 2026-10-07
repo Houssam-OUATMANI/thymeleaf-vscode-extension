@@ -40,7 +40,7 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 ### Navigation between Java and templates
 
 <div align="center">
-  <img src="./assets/jump-to%20template.png" alt="Code lens to open a referenced Thymeleaf template or fragment" width=800>
+  <img src="./assets/jump-to-template.png" alt="Code lens to open a referenced Thymeleaf template or fragment" width=800>
   <br/>
   <br/>
   <br/>
