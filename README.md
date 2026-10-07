@@ -8,35 +8,61 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 
 ### Completion and Java-backed symbols
 
-<p align="center">
-  <img src="./assets/th-suggest.png" alt="Completion suggestions for Thymeleaf attributes" width="49%">
-  <img src="./assets/thymeleaf-helpers.png" alt="Completion suggestions for Thymeleaf utility objects" width="49%">
-</p>
-<p align="center">
-  <img src="./assets/thymeleaf-helper-2.png" alt="Completion suggestions for Thymeleaf utility methods" width="49%">
-  <img src="./assets/suggestion.png" alt="Java-backed model property completion and hover documentation" width="49%">
-</p>
-<p align="center">
-  <img src="./assets/fragment.png" alt="Completion suggestions for Thymeleaf fragments" width="49%">
-  <img src="./assets/pagination.png" alt="Completion suggestions for Java pagination model methods" width="49%">
-</p>
+<div align="center">
+
+  <img  src="./assets/th-suggest.png" alt="Completion suggestions for Thymeleaf attributes" width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/thymeleaf-helpers.png" alt="Completion suggestions for Thymeleaf utility objects"  width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/thymeleaf-helper-2.png" alt="Completion suggestions for Thymeleaf utility methods"  width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/suggestion.png" alt="Java-backed model property completion and hover documentation"  width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/fragment.png" alt="Completion suggestions for Thymeleaf fragments"  width=800>
+  <br/>
+  <br/>
+  <br/>
+
+  <img src="./assets/pagination.png" alt="Completion suggestions for Java pagination model methods"  width=800>
+  <br/>
+  <br/>
+  <br/>
+</div>
 
 ### Navigation between Java and templates
 
-<p align="center">
-  <img src="./assets/jump-to%20template.png" alt="Code lens to open a referenced Thymeleaf template or fragment" width="49%">
-  <img src="./assets/jump-to-controller.png" alt="Code lens to open the Spring controller for a template" width="49%">
-</p>
-<p align="center">
-  <img src="./assets/jump-to-template-from-ctrl.png" alt="Spring controller navigation marker in a Thymeleaf template" width="49%">
-  <img src="./assets/ctrl.png" alt="Spring controller model attributes recognized by the extension" width="49%">
-</p>
+<div align="center">
+  <img src="./assets/jump-to%20template.png" alt="Code lens to open a referenced Thymeleaf template or fragment" width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/jump-to-controller.png" alt="Code lens to open the Spring controller for a template" width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/jump-to-template-from-ctrl.png" alt="Spring controller navigation marker in a Thymeleaf template" width=800>
+  <br/>
+  <br/>
+  <br/>
+  <img src="./assets/ctrl.png" alt="Spring controller model attributes recognized by the extension" width=800>
+  <br/>
+  <br/>
+  <br/>
+</div>
 
 ### Diagnostics and quick fixes
 
-<p align="center">
-  <img src="./assets/fix.png" alt="Quick fix replacing a misspelled Thymeleaf attribute" width="49%">
-</p>
+<div align="center">
+  <img src="./assets/fix.png" alt="Quick fix replacing a misspelled Thymeleaf attribute" width=800>
+</div>
 
 Screenshots are hosted in the repository and are not included in the extension package.
 
