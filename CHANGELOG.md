@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.0] - 2026-10-07
+
+### Added
+
+- Add code lenses to navigate between Spring controller handlers, Thymeleaf templates, and referenced fragments.
+- Add gutter markers for controller mappings, templates, and Thymeleaf fragments.
+- Add quick fixes to declare unresolved model properties with a `thymesVar` directive or create a missing message key in a message bundle.
+
+### Improved
+
+- Detect unresolved properties in nested model expressions and recognize additional `sec:*` and `layout:*` attributes.
+- Improve Thymeleaf expression parsing and completion.
+
+### Notes
+
+- README screenshots are linked from the repository and are not included in the extension package.
+
 ## [0.3.1] - 2026-10-06
 
 ### Added

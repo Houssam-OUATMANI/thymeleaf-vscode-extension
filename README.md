@@ -6,21 +6,37 @@ Bring Thymeleaf-aware editing to your Spring Boot templates with Java-backed com
 
 ## In action
 
-| Thymeleaf attribute completion | Thymeleaf utility completion |
-| --- | --- |
-| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/th-suggest.png" alt="Completion suggestions for Thymeleaf attributes" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/thymeleaf-helpers.png" alt="Completion suggestions for Thymeleaf utility objects" width="100%"> |
+### Completion and Java-backed symbols
 
-| Thymeleaf utility method completion | Java-backed model property completion |
-| --- | --- |
-| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/thymeleaf-helper-2.png" alt="Completion suggestions for Thymeleaf utility methods" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/suggestion.png" alt="Java-backed model property completion and hover documentation" width="100%"> |
+<p align="center">
+  <img src="./assets/th-suggest.png" alt="Completion suggestions for Thymeleaf attributes" width="49%">
+  <img src="./assets/thymeleaf-helpers.png" alt="Completion suggestions for Thymeleaf utility objects" width="49%">
+</p>
+<p align="center">
+  <img src="./assets/thymeleaf-helper-2.png" alt="Completion suggestions for Thymeleaf utility methods" width="49%">
+  <img src="./assets/suggestion.png" alt="Java-backed model property completion and hover documentation" width="49%">
+</p>
+<p align="center">
+  <img src="./assets/fragment.png" alt="Completion suggestions for Thymeleaf fragments" width="49%">
+  <img src="./assets/pagination.png" alt="Completion suggestions for Java pagination model methods" width="49%">
+</p>
 
-| Fragment completion | Java pagination model methods |
-| --- | --- |
-| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/fragment.png" alt="Completion suggestions for Thymeleaf fragments" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/pagination.png" alt="Completion suggestions for Java pagination model methods" width="100%"> |
+### Navigation between Java and templates
 
-| Spring controller model indexing | Quick fix for a misspelled attribute |
-| --- | --- |
-| <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/ctrl.png" alt="Spring controller model attributes recognized by the extension" width="100%"> | <img src="https://raw.githubusercontent.com/Houssam-OUATMANI/thymeleaf-vscode-extension/main/assets/fix.png" alt="Quick fix replacing a misspelled Thymeleaf attribute" width="100%"> |
+<p align="center">
+  <img src="./assets/jump-to%20template.png" alt="Code lens to open a referenced Thymeleaf template or fragment" width="49%">
+  <img src="./assets/jump-to-controller.png" alt="Code lens to open the Spring controller for a template" width="49%">
+</p>
+<p align="center">
+  <img src="./assets/jump-to-template-from-ctrl.png" alt="Spring controller navigation marker in a Thymeleaf template" width="49%">
+  <img src="./assets/ctrl.png" alt="Spring controller model attributes recognized by the extension" width="49%">
+</p>
+
+### Diagnostics and quick fixes
+
+<p align="center">
+  <img src="./assets/fix.png" alt="Quick fix replacing a misspelled Thymeleaf attribute" width="49%">
+</p>
 
 Screenshots are hosted in the repository and are not included in the extension package.
 
@@ -32,6 +48,7 @@ Screenshots are hosted in the repository and are not included in the extension p
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
 - Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
+- Code lenses and gutter markers for navigating between Spring controller handlers, templates, and Thymeleaf fragments.
 - Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 - Support for both standard `th:*` attributes and their HTML5 `data-th-*` equivalents, including completion, navigation, diagnostics, and syntax highlighting.
