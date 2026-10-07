@@ -24,6 +24,7 @@ import {
   provideThymeleafRenameEdits
 } from "../server/features/navigationProvider";
 import { findEnclosingLoopVariables } from "../server/features/featureUtils";
+import { provideCodeLenses, provideGutterDecorations } from "../server/features/codeLensProvider";
 import { parsePropertiesFile, ProjectIndex } from "../server/projectIndex";
 
 test("navigates from a Thymeleaf model property to its Java declaration", async () => {
@@ -1394,6 +1395,150 @@ test("completes selection-expression properties from th:object context", async (
     );
 
     assert.ok(completions.some(({ label }) => label === "displayName"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("supports th:with local variables in completion and diagnostics", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<div th:with="localUser=\${user}, count=42">
+  <span th:text="\${localUser.dis}"></span>
+</div>
+<span th:text="\${local}"></span>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const insideOffset = text.indexOf("localUser.dis") + "localUser.dis".length;
+    const insideCompletions = provideCompletions(
+      document,
+      document.positionAt(insideOffset),
+      fixture.index
+    );
+    assert.ok(insideCompletions.some(({ label }) => label === "displayName"));
+
+    const outsideOffset = text.indexOf("\${local}") + "\${local".length;
+    const outsideCompletions = provideCompletions(
+      document,
+      document.positionAt(outsideOffset),
+      fixture.index
+    );
+    assert.ok(!outsideCompletions.some(({ label }) => label === "localUser"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("restricts th:object scope strictly to its enclosing element without leaking", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<form th:object="\${user}">
+  <input th:field="*{dis}">
+</form>
+<div th:text="*{dis}"></div>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const insideOffset = text.indexOf("*{dis") + "*{dis".length;
+    const insideCompletions = provideCompletions(
+      document,
+      document.positionAt(insideOffset),
+      fixture.index
+    );
+    assert.ok(insideCompletions.some(({ label }) => label === "displayName"));
+
+    const outsideOffset = text.lastIndexOf("*{dis") + "*{dis".length;
+    const outsideCompletions = provideCompletions(
+      document,
+      document.positionAt(outsideOffset),
+      fixture.index
+    );
+    assert.ok(!outsideCompletions.some(({ label }) => label === "displayName"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("supports void HTML5 elements like input without corrupting th:each scope", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<div th:each="p : \${ps}">
+  <input type="text" name="filter">
+  <span th:text="\${p.tit}"></span>
+</div>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const offset = text.indexOf("p.tit") + "p.tit".length;
+    const completions = provideCompletions(
+      document,
+      document.positionAt(offset),
+      fixture.index
+    );
+    assert.ok(completions.some(({ label }) => label === "title"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("provides quick fixes for missing message keys and unknown properties", async () => {
+  const fixture = await createFixture();
+  try {
+    const text = `<p th:text="#{missing.test.key}"></p>
+<p th:text="\${user.unknownProp}"></p>`;
+    const document = TextDocument.create(fixture.templateUri, "html", 1, text);
+    const diagnostics = validateDocument(document, fixture.index, DEFAULT_SETTINGS);
+
+    const messageDiag = diagnostics.find((d) => d.code === "missing-message-key");
+    assert.ok(messageDiag);
+    const messageActions = provideCodeActions(
+      document,
+      messageDiag.range,
+      [messageDiag],
+      fixture.index
+    );
+    assert.ok(messageActions.some((a) => a.title.includes("missing.test.key")));
+
+    const propDiag = diagnostics.find((d) => d.code === "unknown-model-property");
+    assert.ok(propDiag);
+    const propActions = provideCodeActions(
+      document,
+      propDiag.range,
+      [propDiag],
+      fixture.index
+    );
+    assert.ok(propActions.some((a) => a.title.includes("@thymesVar")));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("provides bidirectional CodeLens and Gutter decorations between controllers and templates", async () => {
+  const fixture = await createFixture();
+  try {
+    const javaDoc = TextDocument.create(
+      pathToFileURL(fixture.controllerPath).toString(),
+      "java",
+      1,
+      fixture.controller
+    );
+    const javaLenses = provideCodeLenses(javaDoc, fixture.index);
+    assert.ok(javaLenses.length > 0);
+    assert.ok(javaLenses.some((l) => l.command?.title.includes("users/list.html")));
+
+    const javaGutter = provideGutterDecorations(
+      pathToFileURL(fixture.controllerPath).toString(),
+      "java",
+      fixture.index
+    );
+    assert.ok(javaGutter.some((g) => g.tooltip.includes("users/list.html")));
+
+    const htmlDoc = TextDocument.create(
+      pathToFileURL(path.join(fixture.root, "src/main/resources/templates/users/list.html")).toString(),
+      "html",
+      1,
+      `<div>Hello</div>`
+    );
+    const htmlLenses = provideCodeLenses(htmlDoc, fixture.index);
+    assert.ok(htmlLenses.some((l) => l.command?.title.includes("UserController")));
+
+    const htmlGutter = provideGutterDecorations(htmlDoc.uri, "html", fixture.index);
+    assert.ok(htmlGutter.some((g) => g.tooltip.includes("UserController")));
   } finally {
     await fixture.dispose();
   }

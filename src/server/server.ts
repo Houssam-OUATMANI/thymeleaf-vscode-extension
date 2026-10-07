@@ -29,6 +29,7 @@ import {
   SEMANTIC_TOKEN_MODIFIERS,
   SEMANTIC_TOKEN_TYPES
 } from "./features/semanticTokensProvider";
+import { provideCodeLenses, provideGutterDecorations } from "./features/codeLensProvider";
 import { CompilerJavaType, ProjectIndex } from "./projectIndex";
 
 const connection = createConnection(ProposedFeatures.all);
@@ -60,6 +61,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       hoverProvider: true,
       codeActionProvider: {
         codeActionKinds: [CodeActionKind.QuickFix]
+      },
+      codeLensProvider: {
+        resolveProvider: false
       },
       semanticTokensProvider: {
         legend: {
@@ -197,6 +201,15 @@ connection.onNotification("thymeleaf/resetJavaCompilerTypes", () => {
 connection.onCodeAction(({ textDocument, range, context }) => {
   const document = documents.get(textDocument.uri);
   return document ? provideCodeActions(document, range, context.diagnostics, projectIndex) : [];
+});
+
+connection.onCodeLens(({ textDocument }) => {
+  const document = documents.get(textDocument.uri);
+  return document ? provideCodeLenses(document, projectIndex) : [];
+});
+
+connection.onRequest("thymeleaf/gutterDecorations", (params: { readonly uri: string; readonly languageId: string }) => {
+  return provideGutterDecorations(params.uri, params.languageId, projectIndex);
 });
 
 connection.languages.semanticTokens.on(({ textDocument }) => {

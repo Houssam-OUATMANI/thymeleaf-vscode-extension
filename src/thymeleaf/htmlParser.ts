@@ -43,7 +43,16 @@ export function findThymeleafAttributes(text: string): ThymeleafHtmlAttribute[] 
   return attributes;
 }
 
-function findTagEnd(text: string, start: number): number {
+const HTML5_VOID_ELEMENTS = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr"
+]);
+
+export function isVoidElement(tagName: string): boolean {
+  return HTML5_VOID_ELEMENTS.has(tagName.toLowerCase());
+}
+
+export function findTagEnd(text: string, start: number): number {
   let quote: "'" | '"' | undefined;
   for (let index = start; index < text.length; index += 1) {
     const character = text[index];
@@ -58,7 +67,7 @@ function findTagEnd(text: string, start: number): number {
   return -1;
 }
 
-function readTagName(text: string, start: number, end: number): string {
+export function readTagName(text: string, start: number, end: number): string {
   let cursor = start;
   while (cursor < end && !/\s/.test(text[cursor])) cursor += 1;
   return text.slice(start, cursor);
@@ -97,10 +106,20 @@ function readTagAttributes(
       while (cursor < end && !/[\s>]/.test(text[cursor])) cursor += 1;
     }
 
-    const canonicalName = name.startsWith("data-th-")
-      ? `th:${name.slice("data-th-".length)}`
-      : name;
-    if (canonicalName.startsWith("th:")) {
+    let canonicalName = name;
+    if (name.startsWith("data-th-")) {
+      canonicalName = `th:${name.slice("data-th-".length)}`;
+    } else if (name.startsWith("data-sec-")) {
+      canonicalName = `sec:${name.slice("data-sec-".length)}`;
+    } else if (name.startsWith("data-layout-")) {
+      canonicalName = `layout:${name.slice("data-layout-".length)}`;
+    }
+
+    if (
+      canonicalName.startsWith("th:") ||
+      canonicalName.startsWith("sec:") ||
+      canonicalName.startsWith("layout:")
+    ) {
       attributes.push({
         name: canonicalName,
         sourceName: name,

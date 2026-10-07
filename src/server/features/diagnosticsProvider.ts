@@ -3,6 +3,7 @@ import {
   CodeActionKind,
   Diagnostic,
   DiagnosticSeverity,
+  Position,
   Range,
   TextDocument,
   TextEdit
@@ -238,6 +239,37 @@ export function provideCodeActions(
           }
         });
       }
+      actions.push({
+        title: `Add <!--/*@thymesVar id="${propertyName}" type="Object"*/--> directive`,
+        kind: CodeActionKind.QuickFix,
+        diagnostics: [diagnostic],
+        edit: {
+          changes: {
+            [document.uri]: [
+              TextEdit.insert(Position.create(0, 0), `<!--/*@thymesVar id="${propertyName}" type="Object"*/-->\n`)
+            ]
+          }
+        }
+      });
+    } else if (diagnostic.code === "missing-message-key" && rangesOverlap(diagnostic.range, range)) {
+      const match = /Message key '([^']+)' was not found/.exec(diagnostic.message);
+      if (match) {
+        const key = match[1];
+        const allMessages = index.getAllMessageProperties();
+        const targetUri = allMessages[0]?.uri;
+        if (targetUri) {
+          actions.push({
+            title: `Create message key '${key}' in message bundle`,
+            kind: CodeActionKind.QuickFix,
+            diagnostics: [diagnostic],
+            edit: {
+              changes: {
+                [targetUri]: [TextEdit.insert(Position.create(100000, 0), `\n${key}=${key}\n`)]
+              }
+            }
+          });
+        }
+      }
     }
   }
   return actions;
@@ -266,31 +298,68 @@ function validateModelProperties(
 
   for (const { expression, baseOffset } of expressionsToCheck) {
     if (!expression.body.trim() || (expression.prefix !== "$" && expression.prefix !== "*")) continue;
-    const resolved = resolveModelPath(
-      expression.body,
-      expression.prefix,
-      text,
-      baseOffset + expression.start,
-      templateName,
-      index,
-      templateUri
-    );
-    if (!resolved?.unresolved) continue;
-    const { name, typeName, offset } = resolved.unresolved;
-    const propertyOffset = baseOffset + expression.start + 2 + offset;
-    diagnostics.push({
-      range: rangeAtOffset(text, propertyOffset, propertyOffset + name.length),
-      severity: DiagnosticSeverity.Warning,
-      code: "unknown-model-property",
-      source: "Thymeleaf",
-      message: `Property '${name}' was not found on model type '${typeName}'.`
-    });
+    const subPaths = extractSubPaths(expression.body);
+    for (const { subPath, offset: subOffset } of subPaths) {
+      const resolved = resolveModelPath(
+        subPath,
+        expression.prefix,
+        text,
+        baseOffset + expression.start + 2 + subOffset,
+        templateName,
+        index,
+        templateUri
+      );
+      if (!resolved?.unresolved) continue;
+      const { name, typeName, offset } = resolved.unresolved;
+      const propertyOffset = baseOffset + expression.start + 2 + subOffset + offset;
+      diagnostics.push({
+        range: rangeAtOffset(text, propertyOffset, propertyOffset + name.length),
+        severity: DiagnosticSeverity.Warning,
+        code: "unknown-model-property",
+        source: "Thymeleaf",
+        message: `Property '${name}' was not found on model type '${typeName}'.`
+      });
+    }
   }
   return diagnostics;
 }
 
+function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
+  if (/^[\w$]+(?:\.[\w$]+(?:\([^()]*\))?)*$/.test(body.trim())) {
+    const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
+    return [{ subPath: body.trim(), offset: leadingSpaces }];
+  }
+
+  const results: { subPath: string; offset: number }[] = [];
+  const keywords = new Set([
+    "true", "false", "null", "empty", "and", "or", "not",
+    "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof"
+  ]);
+
+  const pathRegex = /\b([a-zA-Z_$][\w$]*(?:\s*\.\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?)+)\b/g;
+  for (const match of body.matchAll(pathRegex)) {
+    if (match.index === undefined) continue;
+    const pathStr = match[1];
+    const root = pathStr.split(".")[0]?.trim();
+    if (root && !keywords.has(root)) {
+      results.push({ subPath: pathStr, offset: match.index });
+    }
+  }
+
+  if (results.length === 0) {
+    const simpleMatch = /^\s*([a-zA-Z_$][\w$]*)/.exec(body);
+    if (simpleMatch && !keywords.has(simpleMatch[1])) {
+      results.push({ subPath: simpleMatch[1], offset: simpleMatch.index ?? 0 });
+    }
+  }
+
+  return results;
+}
+
 function isKnownAttribute(name: string): boolean {
   return ATTRIBUTE_NAMES.has(name) ||
+    name.startsWith("sec:") ||
+    name.startsWith("layout:") ||
     name.startsWith("th:lang-") ||
     name.startsWith("th:xml-lang-") ||
     name.startsWith("th:xml:lang-");

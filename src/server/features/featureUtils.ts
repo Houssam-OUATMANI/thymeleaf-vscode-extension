@@ -1,5 +1,10 @@
 import { Location, Position, Range, TextDocument } from "vscode-languageserver/node";
-import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
+import {
+  findTagEnd,
+  findThymeleafAttributes,
+  isVoidElement,
+  readTagName
+} from "../../thymeleaf/htmlParser";
 import { findThymeleafExpressions } from "../../thymeleaf/expressions";
 import { JavaProperty } from "../javaIndexer";
 import { findThymesVars, ProjectIndex } from "../projectIndex";
@@ -7,13 +12,35 @@ import { findThymesVars, ProjectIndex } from "../projectIndex";
 export function findSelectedObjectType(
   text: string,
   offset: number,
-  modelAttributes: ReadonlyMap<string, string>
+  modelAttributes: ReadonlyMap<string, string>,
+  index?: ProjectIndex
 ): string | undefined {
-  const before = text.slice(0, offset);
-  const objectPattern = /\bth:object\s*=\s*(["'])\s*\$\{\s*([\w$]+)\s*\}\s*\1/g;
-  let selectedName: string | undefined;
-  for (const match of before.matchAll(objectPattern)) selectedName = match[2];
-  return selectedName ? modelAttributes.get(selectedName) : undefined;
+  const allAttributes = findThymeleafAttributes(text);
+  const objectAttributes = allAttributes.filter((attr) => attr.name === "th:object");
+  const enclosing = objectAttributes.filter((attr) =>
+    isOffsetInsideElement(text, attr.nameStart, offset)
+  );
+  if (enclosing.length === 0) return undefined;
+
+  const innermost = enclosing.sort((a, b) => b.nameStart - a.nameStart)[0];
+  const expr = findThymeleafExpressions(innermost.value)[0];
+  if (!expr) return undefined;
+
+  const parts = expr.body.trim().split(".");
+  const root = parts[0];
+  let currentType = root ? modelAttributes.get(root) : undefined;
+  if (index && currentType) {
+    for (let i = 1; i < parts.length; i += 1) {
+      const cleanProp = parts[i].replace(/\(\)$/, "");
+      const prop = index.findProperty(currentType, cleanProp);
+      if (!prop) {
+        currentType = undefined;
+        break;
+      }
+      currentType = prop.typeName;
+    }
+  }
+  return currentType;
 }
 
 export function getCollectionElementType(typeName: string): string {
@@ -30,55 +57,106 @@ export interface LoopVariableInfo {
   readonly declarationOffset: number;
 }
 
-export function findEnclosingLoopVariables(
+export function findEnclosingLocalVariables(
   text: string,
   offset: number,
   modelAttributes: ReadonlyMap<string, string>,
   index: ProjectIndex
 ): LoopVariableInfo[] {
   const variables: LoopVariableInfo[] = [];
-  for (const attribute of findThymeleafAttributes(text)) {
-    if (attribute.name !== "th:each") continue;
-    if (!isOffsetInsideElement(text, attribute.nameStart, offset)) continue;
-    const iteration = /^\s*([\w$]+)\s*(?:,\s*([\w$]+)\s*)?:\s*([\s\S]+)$/.exec(attribute.value);
-    if (!iteration) continue;
-    const loopVar = iteration[1];
-    const statVar = iteration[2];
-    const loopVarOffset = attribute.valueStart + attribute.value.indexOf(loopVar);
 
-    let typeName = "java.lang.Object";
-    const sourceExpression = findThymeleafExpressions(iteration[3])
-      .find(({ prefix }) => prefix === "$" || prefix === "*");
-    if (sourceExpression) {
-      if (sourceExpression.body.includes("#numbers.sequence")) {
-        typeName = "java.lang.Integer";
-      } else {
-        const [root, ...properties] = sourceExpression.body.trim().split(".");
-        let currentType: string | undefined = root ? modelAttributes.get(root) : undefined;
-        if (currentType) {
-          for (const propertyName of properties) {
-            const property = index.findProperty(currentType, propertyName);
-            if (!property) {
-              currentType = undefined;
-              break;
+  for (const attribute of findThymeleafAttributes(text)) {
+    if (!isOffsetInsideElement(text, attribute.nameStart, offset)) continue;
+
+    if (attribute.name === "th:each") {
+      const iteration = /^\s*([\w$]+)\s*(?:,\s*([\w$]+)\s*)?:\s*([\s\S]+)$/.exec(attribute.value);
+      if (!iteration) continue;
+      const loopVar = iteration[1];
+      const statVar = iteration[2];
+      const loopVarOffset = attribute.valueStart + attribute.value.indexOf(loopVar);
+
+      let typeName = "java.lang.Object";
+      const sourceExpression = findThymeleafExpressions(iteration[3])
+        .find(({ prefix }) => prefix === "$" || prefix === "*");
+      if (sourceExpression) {
+        if (sourceExpression.body.includes("#numbers.sequence")) {
+          typeName = "java.lang.Integer";
+        } else {
+          const [root, ...properties] = sourceExpression.body.trim().split(".");
+          let currentType: string | undefined = root ? modelAttributes.get(root) : undefined;
+          if (currentType) {
+            for (const propertyName of properties) {
+              const cleanProp = propertyName.replace(/\(\)$/, "");
+              const property = index.findProperty(currentType, cleanProp);
+              if (!property) {
+                currentType = undefined;
+                break;
+              }
+              currentType = property.typeName;
             }
-            currentType = property.typeName;
+            if (currentType) typeName = getCollectionElementType(currentType);
           }
-          if (currentType) typeName = getCollectionElementType(currentType);
         }
       }
-    }
-    variables.push({ name: loopVar, typeName, declarationOffset: loopVarOffset });
-    if (statVar) {
-      const statVarOffset = attribute.valueStart + attribute.value.indexOf(statVar);
-      variables.push({
-        name: statVar,
-        typeName: "org.thymeleaf.spring6.context.IterStatus",
-        declarationOffset: statVarOffset
-      });
+      variables.push({ name: loopVar, typeName, declarationOffset: loopVarOffset });
+      if (statVar) {
+        const statVarOffset = attribute.valueStart + attribute.value.indexOf(statVar);
+        variables.push({
+          name: statVar,
+          typeName: "org.thymeleaf.spring6.context.IterStatus",
+          declarationOffset: statVarOffset
+        });
+      }
+    } else if (attribute.name === "th:with") {
+      const declarations = splitVariableAssignments(attribute.value);
+      for (const { name: varName, expr: varExpr, nameOffset } of declarations) {
+        let typeName = "java.lang.Object";
+        const innerExpr = findThymeleafExpressions(varExpr).find(
+          ({ prefix }) => prefix === "$" || prefix === "*"
+        );
+        if (innerExpr) {
+          const [root, ...properties] = innerExpr.body.trim().split(".");
+          let currentType: string | undefined = root ? modelAttributes.get(root) : undefined;
+          if (currentType) {
+            for (const propertyName of properties) {
+              const cleanProp = propertyName.replace(/\(\)$/, "");
+              const property = index.findProperty(currentType, cleanProp);
+              if (!property) {
+                currentType = undefined;
+                break;
+              }
+              currentType = property.typeName;
+            }
+            if (currentType) typeName = currentType;
+          }
+        } else if (varExpr === "true" || varExpr === "false") {
+          typeName = "boolean";
+        } else if (/^\d+$/.test(varExpr)) {
+          typeName = "java.lang.Integer";
+        } else if (/^\d+\.\d+$/.test(varExpr)) {
+          typeName = "java.lang.Double";
+        } else if (varExpr.startsWith("'") && varExpr.endsWith("'")) {
+          typeName = "java.lang.String";
+        }
+        variables.push({
+          name: varName,
+          typeName,
+          declarationOffset: attribute.valueStart + nameOffset
+        });
+      }
     }
   }
+
   return variables;
+}
+
+export function findEnclosingLoopVariables(
+  text: string,
+  offset: number,
+  modelAttributes: ReadonlyMap<string, string>,
+  index: ProjectIndex
+): LoopVariableInfo[] {
+  return findEnclosingLocalVariables(text, offset, modelAttributes, index);
 }
 
 export function resolveModelType(
@@ -91,8 +169,8 @@ export function resolveModelType(
   const declaredType = modelAttributes.get(modelName);
   if (declaredType) return declaredType;
 
-  const loopVars = findEnclosingLoopVariables(text, offset, modelAttributes, index);
-  const found = loopVars.find((v) => v.name === modelName);
+  const localVars = findEnclosingLocalVariables(text, offset, modelAttributes, index);
+  const found = localVars.find((v) => v.name === modelName);
   if (found) return found.typeName;
 
   return undefined;
@@ -127,9 +205,8 @@ export function resolveModelPath(
   if (!rootMatch || rootMatch.index === undefined) return undefined;
   const rootName = rootMatch[1];
   const chainOffset = rootMatch.index + rootMatch[0].length;
-  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
   let typeName = prefix === "*"
-    ? findSelectedObjectType(text, expressionOffset, modelAttributes)
+    ? findSelectedObjectType(text, expressionOffset, modelAttributes, index)
     : resolveModelType(rootName, text, expressionOffset, modelAttributes, index);
   if (!typeName) return undefined;
 
@@ -151,13 +228,26 @@ export function resolveModelPath(
 
   let accessOffset = chainOffset;
   while (accessOffset < body.length) {
-    accessPattern.lastIndex = accessOffset;
-    const access = accessPattern.exec(body);
-    if (!access) break;
-    const name = access[1];
-    const isMethodCall = access[2] !== undefined;
-    const nameOffset = accessOffset + access[0].indexOf(name);
-    accessOffset += access[0].length;
+    const remaining = body.slice(accessOffset);
+    const dotMatch = /^\s*\.\s*([\w$]+)/.exec(remaining);
+    if (!dotMatch) break;
+
+    const name = dotMatch[1];
+    const nameOffset = accessOffset + dotMatch[0].indexOf(name);
+    let afterNameOffset = accessOffset + dotMatch[0].length;
+
+    let isMethodCall = false;
+    const parenMatch = /^\s*\(/.exec(body.slice(afterNameOffset));
+    if (parenMatch) {
+      const openParenIndex = afterNameOffset + parenMatch[0].indexOf("(");
+      const closeParenIndex = readBalancedParentheses(body, openParenIndex);
+      if (closeParenIndex >= 0) {
+        isMethodCall = true;
+        afterNameOffset = closeParenIndex + 1;
+      }
+    }
+
+    accessOffset = afterNameOffset;
     consumedLength = accessOffset;
 
     if (isMethodCall) {
@@ -183,6 +273,80 @@ export function resolveModelPath(
   }
 
   return { typeName, property: lastProperty, unresolved: undefined, consumedLength };
+}
+
+function readBalancedParentheses(text: string, openIndex: number): number {
+  if (text[openIndex] !== "(") return -1;
+  let depth = 0;
+  let quote: "'" | '"' | undefined;
+  for (let index = openIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (char === quote && text[index - 1] !== "\\") quote = undefined;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function splitVariableAssignments(
+  value: string
+): { readonly name: string; readonly expr: string; readonly nameOffset: number }[] {
+  const result: { name: string; expr: string; nameOffset: number }[] = [];
+  let depthParen = 0;
+  let depthBrace = 0;
+  let quote: "'" | '"' | undefined;
+  let start = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === quote && value[index - 1] !== "\\") quote = undefined;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "(") {
+      depthParen += 1;
+    } else if (char === ")") {
+      depthParen -= 1;
+    } else if (char === "{" || char === "[") {
+      depthBrace += 1;
+    } else if (char === "}" || char === "]") {
+      depthBrace -= 1;
+    } else if (char === "," && depthParen === 0 && depthBrace === 0) {
+      parseAssignment(value.slice(start, index), start, result);
+      start = index + 1;
+    }
+  }
+  if (start < value.length) {
+    parseAssignment(value.slice(start), start, result);
+  }
+  return result;
+}
+
+function parseAssignment(
+  part: string,
+  baseOffset: number,
+  result: { name: string; expr: string; nameOffset: number }[]
+): void {
+  const eqIndex = part.indexOf("=");
+  if (eqIndex < 0) return;
+  const rawName = part.slice(0, eqIndex);
+  const leadingWhitespace = /^\s*/.exec(rawName)?.[0].length ?? 0;
+  const name = rawName.trim();
+  const expr = part.slice(eqIndex + 1).trim();
+  if (name && expr) {
+    result.push({
+      name,
+      expr,
+      nameOffset: baseOffset + leadingWhitespace
+    });
+  }
 }
 
 export interface ExecutionObjectMethod {
@@ -374,26 +538,80 @@ export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function isOffsetInsideElement(text: string, elementStart: number, offset: number): boolean {
+export function isOffsetInsideElement(text: string, elementStart: number, offset: number): boolean {
   const tagStart = text.lastIndexOf("<", elementStart);
   if (tagStart < 0 || offset < tagStart) return false;
-  const openingTag = text.slice(tagStart, text.indexOf(">", tagStart) + 1);
-  const tagName = /^<\s*([\w:-]+)/.exec(openingTag)?.[1];
-  if (!tagName || /\/\s*>$/.test(openingTag)) {
-    return offset <= tagStart + openingTag.length;
+
+  const tagEnd = findTagEnd(text, tagStart + 1);
+  if (tagEnd < 0) return false;
+
+  if (offset >= tagStart && offset <= tagEnd) {
+    return true;
   }
 
-  const tagPattern = new RegExp(`<\\/?${escapeRegExp(tagName)}\\b[^>]*>`, "gi");
-  tagPattern.lastIndex = tagStart;
-  let depth = 0;
-  for (let match = tagPattern.exec(text); match; match = tagPattern.exec(text)) {
-    if (match.index > offset) break;
-    if (match[0].startsWith("</")) {
-      depth -= 1;
-      if (depth === 0) return offset < match.index;
-    } else if (!/\/\s*>$/.test(match[0])) {
-      depth += 1;
-    }
+  const rawOpeningTag = text.slice(tagStart + 1, tagEnd);
+  const tagName = readTagName(text, tagStart + 1, tagEnd).toLowerCase();
+  if (!tagName) return false;
+
+  const isSelfClosing = /\/\s*$/.test(rawOpeningTag);
+  if (isSelfClosing || isVoidElement(tagName)) {
+    return false;
   }
+
+  let depth = 1;
+  let cursor = tagEnd + 1;
+
+  while (cursor < text.length) {
+    const nextTag = text.indexOf("<", cursor);
+    if (nextTag < 0) break;
+
+    if (nextTag > offset) {
+      break;
+    }
+
+    if (text.startsWith("<!--", nextTag)) {
+      const commentEnd = text.indexOf("-->", nextTag + 4);
+      cursor = commentEnd < 0 ? text.length : commentEnd + 3;
+      continue;
+    }
+
+    const nextChar = text[nextTag + 1];
+    if (!nextChar || nextChar === "!" || nextChar === "?") {
+      cursor = nextTag + 1;
+      continue;
+    }
+
+    const currentTagEnd = findTagEnd(text, nextTag + 1);
+    if (currentTagEnd < 0) break;
+
+    const currentRawTag = text.slice(nextTag + 1, currentTagEnd);
+
+    if (nextChar === "/") {
+      const closingName = readTagName(text, nextTag + 2, currentTagEnd).toLowerCase();
+      if (closingName === tagName) {
+        depth -= 1;
+        if (depth === 0) {
+          return offset <= currentTagEnd;
+        }
+      }
+    } else {
+      const openingName = readTagName(text, nextTag + 1, currentTagEnd).toLowerCase();
+      const currentSelfClosing = /\/\s*$/.test(currentRawTag) || isVoidElement(openingName);
+      if (openingName === tagName && !currentSelfClosing) {
+        depth += 1;
+      }
+      if (openingName === "script" || openingName === "style") {
+        const closingTag = text.toLowerCase().indexOf(`</${openingName}`, currentTagEnd + 1);
+        if (closingTag >= 0) {
+          const closingEnd = text.indexOf(">", closingTag);
+          cursor = closingEnd < 0 ? text.length : closingEnd + 1;
+          continue;
+        }
+      }
+    }
+
+    cursor = currentTagEnd + 1;
+  }
+
   return depth > 0 && offset < text.length;
 }
