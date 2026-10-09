@@ -2,7 +2,7 @@
   "name": "thymeleaf-companion",
   "displayName": "Thymeleaf Companion",
   "description": "The missing Thymeleaf extension for Spring Boot apps.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "extensionDependencies": [
     "redhat.java"
   ],

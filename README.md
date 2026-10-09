@@ -68,7 +68,7 @@ Screenshots are hosted in the repository and are not included in the extension p
 
 ## Features
 
-- Prioritized completion for Thymeleaf attributes, model and selection expressions, `th:each` variables, templates, fragments, controller routes, and message keys.
+- Prioritized completion for HTML and Thymeleaf attributes, model and selection expressions, `th:each` variables, templates, fragments, controller routes, and message keys.
 - Contextual completion for `th:*` attributes after whitespace, including precise replacement of partial prefixes, plus Java properties and no-argument methods inherited from indexed classes and interfaces.
 - Go to Definition for Java model properties and methods, controller routes, view names, templates, and fragments; Go to Type Definition for resolvable model variables and properties.
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.

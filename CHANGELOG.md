@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.0] - 2026-10-09
+
+### Added
+
+- Complete standard HTML attributes with global and element-specific suggestions in HTML templates.
+- Report unknown Thymeleaf attributes and suggest likely corrections.
+- Validate model properties in Thymeleaf expressions against indexed Java model types.
+
+### Improved
+
+- Improve Java indexing and model-type inference for Thymeleaf completion and validation.
+
 ## [0.4.0] - 2026-10-07
 
 ### Added
