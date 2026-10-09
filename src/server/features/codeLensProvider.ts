@@ -6,7 +6,7 @@ import {
 } from "vscode-languageserver/node";
 import { findThymeleafExpressions } from "../../thymeleaf/expressions";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
-import { ProjectIndex, sameFileUri } from "../projectIndex";
+import { normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
 import { positionAt } from "./featureUtils";
 
 export interface GutterDecoration {
@@ -25,17 +25,28 @@ export function provideCodeLenses(
     for (const handler of index.controllerHandlers) {
       if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
       const targetTemplate = index.findTemplate(handler.viewName);
-      if (!targetTemplate) continue;
-
       const line = handler.position.line;
-      lenses.push({
-        range: Range.create(Position.create(line, 0), Position.create(line, 0)),
-        command: {
-          title: `$(file-code) Open template '${handler.viewName}.html'`,
-          command: "thymeleaf.openTemplate",
-          arguments: [targetTemplate.uri]
-        }
-      });
+
+      if (targetTemplate) {
+        lenses.push({
+          range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+          command: {
+            title: `$(file-code) Open template '${handler.viewName}.html'`,
+            command: "thymeleaf.openTemplate",
+            arguments: [targetTemplate.uri]
+          }
+        });
+      } else {
+        const normalized = normalizeTemplateName(handler.viewName);
+        lenses.push({
+          range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+          command: {
+            title: `$(new-file) Create template '${normalized}.html'`,
+            command: "thymeleaf.createTemplate",
+            arguments: [normalized, document.uri]
+          }
+        });
+      }
     }
     return lenses;
   }
@@ -105,12 +116,18 @@ export function provideGutterDecorations(
     for (const handler of index.controllerHandlers) {
       if (!sameFileUri(handler.uri, documentUri) || !handler.viewName) continue;
       const targetTemplate = index.findTemplate(handler.viewName);
-      if (!targetTemplate) continue;
-
-      decorations.push({
-        line: handler.position.line,
-        tooltip: `Thymeleaf template: ${handler.viewName}.html`
-      });
+      if (targetTemplate) {
+        decorations.push({
+          line: handler.position.line,
+          tooltip: `Thymeleaf template: ${handler.viewName}.html`
+        });
+      } else {
+        const normalized = normalizeTemplateName(handler.viewName);
+        decorations.push({
+          line: handler.position.line,
+          tooltip: `Missing Thymeleaf template: ${normalized}.html (click CodeLens or run Quick Fix to create)`
+        });
+      }
     }
   } else if (languageId === "html") {
     const template = index.findTemplateByUri(documentUri);

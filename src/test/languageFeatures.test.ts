@@ -8,7 +8,8 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   DEFAULT_SETTINGS,
   provideCodeActions,
-  validateDocument
+  validateDocument,
+  validateJavaDocument
 } from "../server/features/diagnosticsProvider";
 import { provideCompletions } from "../server/features/completionProvider";
 import {
@@ -988,7 +989,10 @@ class Status {
         index.modelAttributesForTemplate("options"),
         index
       ).map(({ name, typeName }) => ({ name, typeName })),
-      [{ name: "s", typeName: "Status" }]
+      [
+        { name: "s", typeName: "Status" },
+        { name: "sStat", typeName: "org.thymeleaf.spring6.context.IterStatus" }
+      ]
     );
     const completions = provideCompletions(
       completionDocument,
@@ -1012,6 +1016,166 @@ class Status {
     assert.ok(definitions);
     assert.equal(definitions.uri, pathToFileURL(path.join(java, "Status.java")).toString());
     assert.equal(definitions.range.start.line, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("completes and validates th:each implicit iterStat properties (index, first, last, count)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-iterstat-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "list.html");
+
+  // Template uses implicit userStat (no explicit stat var declared)
+  const template = `<ul>
+  <li th:each="user : \${users}" th:text="\${userStat.index + ' ' + userStat.count + ' ' + userStat.first + ' ' + userStat.last}"></li>
+</ul>`;
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, template),
+      writeFile(path.join(java, "User.java"), `package demo;\nclass User { private String name; }`),
+      writeFile(path.join(java, "UserController.java"), `package demo;
+@Controller class UserController {
+  @GetMapping("/list")
+  String list(Model model) {
+    List<User> users = null;
+    model.addAttribute("users", users);
+    return "list";
+  }
+}`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+
+    // Validate: no unknown-model-property on userStat.index, .count, .first, .last
+    const diagnostics = validateDocument(document, index, DEFAULT_SETTINGS);
+    const modelErrors = diagnostics.filter(({ code }) => code === "unknown-model-property");
+    assert.deepEqual(modelErrors, []);
+
+    // Completions: typing "userStat." should suggest index, count, size, first, last, even, odd
+    const completionText = template.replace("userStat.index", "userStat.");
+    const completionOffset = completionText.indexOf("userStat.") + "userStat.".length;
+    const completionDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, completionText);
+    const completions = provideCompletions(completionDoc, completionDoc.positionAt(completionOffset), index);
+    const completionLabels = completions.map(({ label }) => label);
+    for (const prop of ["index", "count", "size", "first", "last", "even", "odd"]) {
+      assert.ok(completionLabels.includes(prop), `Expected completion '${prop}' in iterStat completions`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates #fields execution object without false unknown-model-property errors", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-fields-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "form.html");
+
+  const template = `<form th:object="\${user}">
+  <input type="text" th:field="*{name}" />
+  <span th:if="\${#fields.hasErrors('name')}" th:errors="*{name}"></span>
+  <span th:text="\${#fields.errors('name')}"></span>
+  <span th:if="\${#fields.hasErrors()}"></span>
+</form>`;
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, template),
+      writeFile(path.join(java, "User.java"), `package demo;\nclass User { private String name; }`),
+      writeFile(path.join(java, "FormController.java"), `package demo;
+@Controller class FormController {
+  @GetMapping("/form")
+  String form(Model model) {
+    model.addAttribute("user", new User());
+    return "form";
+  }
+}`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+    const diagnostics = validateDocument(document, index, DEFAULT_SETTINGS);
+
+    // No unknown-model-property errors from #fields usage
+    const modelErrors = diagnostics.filter(({ code }) => code === "unknown-model-property");
+    assert.deepEqual(modelErrors, [], `Unexpected model errors: ${JSON.stringify(modelErrors)}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("indexes ModelAndView view name and addObject model attributes from Spring controller", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-modelandview-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "profile.html");
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, `<div th:text="\${username}"></div>`),
+      writeFile(path.join(java, "Account.java"), `package demo;\nclass Account { private String username; private int age; }`),
+      writeFile(path.join(java, "ProfileController.java"), `package demo;
+@Controller class ProfileController {
+  @GetMapping("/profile")
+  ModelAndView profile() {
+    ModelAndView mav = new ModelAndView("profile");
+    mav.addObject("account", new Account());
+    mav.addObject("username", "Alice");
+    return mav;
+  }
+
+  @GetMapping("/profile2")
+  ModelAndView profile2() {
+    ModelAndView mav = new ModelAndView();
+    mav.setViewName("profile");
+    mav.addObject("account", new Account());
+    return mav;
+  }
+}`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // Both handlers should resolve to the "profile" template
+    const handlers = index.getHandlersForTemplate("profile");
+    assert.ok(handlers.length >= 1, "Expected at least one handler for 'profile' template");
+
+    // Model attributes indexed from ModelAndView
+    const modelAttrs = index.modelAttributesForTemplate("profile");
+    const attrMap = new Map(modelAttrs);
+    assert.ok(attrMap.has("account"), "Expected 'account' model attribute from addObject");
+    assert.ok(attrMap.has("username"), "Expected 'username' model attribute from addObject");
+
+    // Template completions should include Account properties
+    const template = `<div th:text="\${account.}"></div>`;
+    const completionOffset = template.indexOf("account.") + "account.".length;
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+    const completions = provideCompletions(doc, doc.positionAt(completionOffset), index);
+    assert.ok(
+      completions.some(({ label }) => label === "username"),
+      "Expected 'username' property completion from Account class"
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1541,6 +1705,119 @@ test("provides bidirectional CodeLens and Gutter decorations between controllers
     assert.ok(htmlGutter.some((g) => g.tooltip.includes("UserController")));
   } finally {
     await fixture.dispose();
+  }
+});
+
+test("suggests classic HTML attributes alongside Thymeleaf attributes in HTML tags", async () => {
+  const fixture = await createFixture();
+  try {
+    // 1. In <div >: suggests both Thymeleaf attributes and global HTML attributes
+    const divDoc = TextDocument.create(fixture.templateUri, "html", 1, "<div >");
+    const divCompletions = provideCompletions(divDoc, divDoc.positionAt(5), fixture.index);
+    assert.ok(divCompletions.some(({ label }) => label === "th:text"));
+    assert.ok(divCompletions.some(({ label }) => label === "th:if"));
+    assert.ok(divCompletions.some(({ label }) => label === "class"));
+    assert.ok(divCompletions.some(({ label }) => label === "id"));
+    assert.ok(divCompletions.some(({ label }) => label === "style"));
+
+    // 2. In <form >: suggests form-specific attributes like action, method, enctype
+    const formDoc = TextDocument.create(fixture.templateUri, "html", 1, "<form >");
+    const formCompletions = provideCompletions(formDoc, formDoc.positionAt(6), fixture.index);
+    assert.ok(formCompletions.some(({ label }) => label === "action"));
+    assert.ok(formCompletions.some(({ label }) => label === "method"));
+    assert.ok(formCompletions.some(({ label }) => label === "th:action"));
+    assert.ok(formCompletions.some(({ label }) => label === "th:object"));
+
+    // 3. Typing prefix "cl" suggests class, th:class, th:classappend
+    const clDoc = TextDocument.create(fixture.templateUri, "html", 1, "<div cl>");
+    const clCompletions = provideCompletions(clDoc, clDoc.positionAt(7), fixture.index);
+    assert.ok(clCompletions.some(({ label }) => label === "class"));
+    assert.ok(clCompletions.some(({ label }) => label === "th:class"));
+    assert.ok(clCompletions.some(({ label }) => label === "th:classappend"));
+
+    // 4. Typing prefix "ac" in form suggests action and th:action
+    const acDoc = TextDocument.create(fixture.templateUri, "html", 1, "<form ac>");
+    const acCompletions = provideCompletions(acDoc, acDoc.positionAt(8), fixture.index);
+    assert.ok(acCompletions.some(({ label }) => label === "action"));
+    assert.ok(acCompletions.some(({ label }) => label === "th:action"));
+
+    // 5. Typing prefix "ty" in input suggests type
+    const inputDoc = TextDocument.create(fixture.templateUri, "html", 1, "<input ty>");
+    const inputCompletions = provideCompletions(inputDoc, inputDoc.positionAt(9), fixture.index);
+    assert.ok(inputCompletions.some(({ label }) => label === "type"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("offers CodeLens, gutter decorations, diagnostics and Quick Fix to create missing template from controller action", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-create-template-"));
+  const javaDir = path.join(root, "src", "main", "java", "demo");
+  const controllerPath = path.join(javaDir, "AdminController.java");
+  const controller = `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class AdminController {
+  @GetMapping("/admin/users")
+  public String listUsers() {
+    return "admin/users/index";
+  }
+
+  @GetMapping("/home")
+  public String home() {
+    return "/index";
+  }
+}
+`;
+
+  try {
+    await mkdir(javaDir, { recursive: true });
+    await writeFile(controllerPath, controller);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const javaDoc = TextDocument.create(
+      pathToFileURL(controllerPath).toString(),
+      "java",
+      1,
+      controller
+    );
+
+    // 1. CodeLens offers to create both missing templates
+    const lenses = provideCodeLenses(javaDoc, index);
+    const adminLens = lenses.find((l) => l.command?.title === "$(new-file) Create template 'admin/users/index.html'");
+    assert.ok(adminLens);
+    assert.equal(adminLens.command!.command, "thymeleaf.createTemplate");
+    assert.deepEqual(adminLens.command!.arguments, ["admin/users/index", javaDoc.uri]);
+
+    const homeLens = lenses.find((l) => l.command?.title === "$(new-file) Create template 'index.html'");
+    assert.ok(homeLens);
+    assert.equal(homeLens.command!.command, "thymeleaf.createTemplate");
+    assert.deepEqual(homeLens.command!.arguments, ["index", javaDoc.uri]);
+
+    // 2. Gutter decorations indicate missing templates
+    const gutter = provideGutterDecorations(javaDoc.uri, "java", index);
+    assert.ok(gutter.some((g) => g.tooltip.includes("admin/users/index.html")));
+    assert.ok(gutter.some((g) => g.tooltip.includes("index.html")));
+
+    // 3. Diagnostics detect missing controller views
+    const diagnostics = validateJavaDocument(javaDoc, index);
+    assert.equal(diagnostics.length, 2);
+    assert.ok(diagnostics.some((d) => d.code === "missing-controller-view" && d.message.includes("admin/users/index.html")));
+    assert.ok(diagnostics.some((d) => d.code === "missing-controller-view" && d.message.includes("index.html")));
+
+    // 4. Quick Fix code actions offer to create the template
+    const adminDiag = diagnostics.find((d) => d.message.includes("admin/users/index.html"))!;
+    const actions = provideCodeActions(javaDoc, adminDiag.range, [adminDiag], index);
+    const createAction = actions.find((a) => a.title.includes("admin/users/index.html"));
+    assert.ok(createAction);
+    assert.equal(createAction.command?.command, "thymeleaf.createTemplate");
+    assert.deepEqual(createAction.command?.arguments, ["admin/users/index", javaDoc.uri]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

@@ -99,14 +99,15 @@ export function findEnclosingLocalVariables(
         }
       }
       variables.push({ name: loopVar, typeName, declarationOffset: loopVarOffset });
-      if (statVar) {
-        const statVarOffset = attribute.valueStart + attribute.value.indexOf(statVar);
-        variables.push({
-          name: statVar,
-          typeName: "org.thymeleaf.spring6.context.IterStatus",
-          declarationOffset: statVarOffset
-        });
-      }
+      const statVarName = statVar ?? `${loopVar}Stat`;
+      const statVarOffset = statVar
+        ? attribute.valueStart + attribute.value.indexOf(statVar)
+        : loopVarOffset;
+      variables.push({
+        name: statVarName,
+        typeName: "org.thymeleaf.spring6.context.IterStatus",
+        declarationOffset: statVarOffset
+      });
     } else if (attribute.name === "th:with") {
       const declarations = splitVariableAssignments(attribute.value);
       for (const { name: varName, expr: varExpr, nameOffset } of declarations) {
@@ -176,6 +177,184 @@ export function resolveModelType(
   return undefined;
 }
 
+export interface ExecutionObjectMethod {
+  readonly name: string;
+  readonly returnType: string;
+  readonly documentation?: string;
+}
+
+export const THYMELEAF_EXECUTION_OBJECTS: Record<
+  string,
+  { readonly description: string; readonly methods: readonly ExecutionObjectMethod[] }
+> = {
+  "#numbers": {
+    description: "Utility methods for numeric objects: sequences, formatting, etc.",
+    methods: [
+      { name: "sequence(from, to)", returnType: "List<Integer>", documentation: "Generate a sequence of integers from `from` to `to` inclusive." },
+      { name: "sequence(from, to, step)", returnType: "List<Integer>", documentation: "Generate a sequence of integers with a given step." },
+      { name: "formatInteger(target, minIntegerDigits)", returnType: "String", documentation: "Format integer with minimum integer digits." },
+      { name: "formatDecimal(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format decimal number." },
+      { name: "formatPercent(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format percentage." }
+    ]
+  },
+  "#strings": {
+    description: "Utility methods for String objects: empty checks, substring, contains, etc.",
+    methods: [
+      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check whether a string is empty or null." },
+      { name: "defaultString(target, defaultValue)", returnType: "String", documentation: "Return default string if target is null or empty." },
+      { name: "contains(target, fragment)", returnType: "boolean", documentation: "Check whether a string contains a fragment." },
+      { name: "startsWith(target, prefix)", returnType: "boolean", documentation: "Check whether a string starts with a prefix." },
+      { name: "endsWith(target, suffix)", returnType: "boolean", documentation: "Check whether a string ends with a suffix." },
+      { name: "length(target)", returnType: "int", documentation: "Return the length of a string." },
+      { name: "toUpperCase(target)", returnType: "String", documentation: "Convert string to upper case." },
+      { name: "toLowerCase(target)", returnType: "String", documentation: "Convert string to lower case." },
+      { name: "capitalize(target)", returnType: "String", documentation: "Capitalize first character." },
+      { name: "trim(target)", returnType: "String", documentation: "Trim whitespace." },
+      { name: "replace(target, before, after)", returnType: "String", documentation: "Replace occurrences of substring." }
+    ]
+  },
+  "#dates": {
+    description: "Utility methods for java.util.Date objects.",
+    methods: [
+      { name: "format(target, pattern)", returnType: "String", documentation: "Format Date with pattern." },
+      { name: "day(target)", returnType: "int", documentation: "Get day of month." },
+      { name: "month(target)", returnType: "int", documentation: "Get month." },
+      { name: "year(target)", returnType: "int", documentation: "Get year." },
+      { name: "createNow()", returnType: "Date", documentation: "Get current Date." }
+    ]
+  },
+  "#temporals": {
+    description: "Utility methods for Java 8 java.time (LocalDate, LocalDateTime) objects.",
+    methods: [
+      { name: "format(target, pattern)", returnType: "String", documentation: "Format Temporal with pattern." },
+      { name: "day(target)", returnType: "int", documentation: "Get day." },
+      { name: "month(target)", returnType: "int", documentation: "Get month." },
+      { name: "year(target)", returnType: "int", documentation: "Get year." },
+      { name: "createNow()", returnType: "LocalDateTime", documentation: "Get current LocalDateTime." }
+    ]
+  },
+  "#lists": {
+    description: "Utility methods for java.util.List objects.",
+    methods: [
+      { name: "size(target)", returnType: "int", documentation: "Get size of list." },
+      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check if list is empty." },
+      { name: "contains(target, element)", returnType: "boolean", documentation: "Check if list contains element." },
+      { name: "sort(target)", returnType: "List", documentation: "Return sorted copy of list." }
+    ]
+  },
+  "#fields": {
+    description: "Spring Form validation and errors utility.",
+    methods: [
+      { name: "hasErrors()", returnType: "boolean", documentation: "Check if form has any validation errors." },
+      { name: "hasErrors(field)", returnType: "boolean", documentation: "Check if field has validation errors." },
+      { name: "hasGlobalErrors()", returnType: "boolean", documentation: "Check if form has global errors." },
+      { name: "errors()", returnType: "List<String>", documentation: "Get all error messages." },
+      { name: "errors(field)", returnType: "List<String>", documentation: "Get list of error messages for field." },
+      { name: "globalErrors()", returnType: "List<String>", documentation: "Get list of global error messages." },
+      { name: "allErrors()", returnType: "List<String>", documentation: "Get all validation errors." },
+      { name: "idFromName(field)", returnType: "String", documentation: "Compute field id for a field expression." },
+      { name: "detailedErrors()", returnType: "List", documentation: "Get list of detailed FieldError objects." },
+      { name: "detailedErrors(field)", returnType: "List", documentation: "Get list of detailed FieldError objects for field." }
+    ]
+  },
+  "#messages": {
+    description: "Utility methods for i18n messages.",
+    methods: [
+      { name: "msg(key)", returnType: "String", documentation: "Get message for key." },
+      { name: "msgWithParams(key, ...params)", returnType: "String", documentation: "Get parameterized message." }
+    ]
+  },
+  "#uris": {
+    description: "Utility methods for URI / URL escaping.",
+    methods: [
+      { name: "escapePath(path)", returnType: "String", documentation: "Escape URI path." },
+      { name: "escapeQueryParam(param)", returnType: "String", documentation: "Escape query param." }
+    ]
+  },
+  "#ctx": {
+    description: "Current Thymeleaf expression evaluation context.",
+    methods: [
+      { name: "getVariable(name)", returnType: "Object", documentation: "Get context variable by name." },
+      { name: "getVariableNames()", returnType: "Set<String>", documentation: "Get all variable names in context." },
+      { name: "getLocale()", returnType: "Locale", documentation: "Get current locale." },
+      { name: "containsVariable(name)", returnType: "boolean", documentation: "Check if variable is defined in context." }
+    ]
+  },
+  "#locale": {
+    description: "Current request java.util.Locale.",
+    methods: [
+      { name: "getLanguage()", returnType: "String", documentation: "Get language code." },
+      { name: "getCountry()", returnType: "String", documentation: "Get country code." },
+      { name: "getDisplayName()", returnType: "String", documentation: "Get display name." }
+    ]
+  },
+  "#request": {
+    description: "Current HttpServletRequest object.",
+    methods: [
+      { name: "getContextPath()", returnType: "String", documentation: "Get request context path." },
+      { name: "getRequestURI()", returnType: "String", documentation: "Get request URI." },
+      { name: "getParameter(name)", returnType: "String", documentation: "Get request parameter by name." },
+      { name: "getParameterValues(name)", returnType: "String[]", documentation: "Get request parameter values by name." },
+      { name: "getHeader(name)", returnType: "String", documentation: "Get HTTP header value." },
+      { name: "getMethod()", returnType: "String", documentation: "Get HTTP method." },
+      { name: "getSession()", returnType: "HttpSession", documentation: "Get current session." }
+    ]
+  },
+  "#response": {
+    description: "Current HttpServletResponse object.",
+    methods: [
+      { name: "getStatus()", returnType: "int", documentation: "Get HTTP status code." },
+      { name: "getContentType()", returnType: "String", documentation: "Get response content type." },
+      { name: "getHeader(name)", returnType: "String", documentation: "Get HTTP response header." }
+    ]
+  },
+  "#session": {
+    description: "Current HttpSession object.",
+    methods: [
+      { name: "getId()", returnType: "String", documentation: "Get session ID." },
+      { name: "getAttribute(name)", returnType: "Object", documentation: "Get session attribute." },
+      { name: "getAttributeNames()", returnType: "Enumeration<String>", documentation: "Get all session attribute names." }
+    ]
+  },
+  "#servletContext": {
+    description: "Current ServletContext object.",
+    methods: [
+      { name: "getContextPath()", returnType: "String", documentation: "Get servlet context path." },
+      { name: "getInitParameter(name)", returnType: "String", documentation: "Get init parameter." }
+    ]
+  },
+  "#conversions": {
+    description: "Spring ConversionService utility.",
+    methods: [
+      { name: "convert(target, className)", returnType: "Object", documentation: "Convert target object to target class." }
+    ]
+  },
+  "#sets": {
+    description: "Utility methods for java.util.Set objects.",
+    methods: [
+      { name: "size(target)", returnType: "int", documentation: "Get size of set." },
+      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check if set is empty." },
+      { name: "contains(target, element)", returnType: "boolean", documentation: "Check if set contains element." }
+    ]
+  },
+  "#maps": {
+    description: "Utility methods for java.util.Map objects.",
+    methods: [
+      { name: "size(target)", returnType: "int", documentation: "Get size of map." },
+      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check if map is empty." },
+      { name: "containsKey(target, key)", returnType: "boolean", documentation: "Check if map contains key." },
+      { name: "containsValue(target, value)", returnType: "boolean", documentation: "Check if map contains value." }
+    ]
+  },
+  "#aggregates": {
+    description: "Utility methods for creating aggregates on arrays or collections.",
+    methods: [
+      { name: "sum(target)", returnType: "Number", documentation: "Calculate sum of numbers." },
+      { name: "avg(target)", returnType: "Number", documentation: "Calculate average of numbers." }
+    ]
+  }
+};
+
 export interface ResolvedModelPath {
   readonly typeName: string;
   readonly property: JavaProperty | undefined;
@@ -201,28 +380,37 @@ export function resolveModelPath(
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
 
-  const rootMatch = /^\s*([\w$]+)/.exec(body);
+  const rootMatch = /^\s*([#\w$]+)/.exec(body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
   const rootName = rootMatch[1];
   const chainOffset = rootMatch.index + rootMatch[0].length;
-  let typeName = prefix === "*"
+  let rawTypeName: string | undefined = prefix === "*"
     ? findSelectedObjectType(text, expressionOffset, modelAttributes, index)
     : resolveModelType(rootName, text, expressionOffset, modelAttributes, index);
-  if (!typeName) return undefined;
 
+  if (!rawTypeName && rootName.startsWith("#")) {
+    const execObj = THYMELEAF_EXECUTION_OBJECTS[rootName];
+    if (execObj) {
+      rawTypeName = rootName;
+    }
+  }
+
+  if (!rawTypeName) return undefined;
+
+  let currentTypeName: string = rawTypeName;
   let lastProperty: JavaProperty | undefined;
   let consumedLength = chainOffset;
   if (prefix === "*") {
-    const property = index.findProperty(typeName, rootName);
+    const property = index.findProperty(currentTypeName, rootName);
     if (!property) {
       return {
-        typeName,
+        typeName: currentTypeName,
         property: undefined,
-        unresolved: { name: rootName, typeName, offset: rootMatch.index },
+        unresolved: { name: rootName, typeName: currentTypeName, offset: rootMatch.index },
         consumedLength
       };
     }
-    typeName = property.typeName;
+    currentTypeName = property.typeName;
     lastProperty = property;
   }
 
@@ -251,28 +439,64 @@ export function resolveModelPath(
     consumedLength = accessOffset;
 
     if (isMethodCall) {
-      const returnType = index.findMethodReturnType(typeName, name);
+      if (currentTypeName.startsWith("#")) {
+        const execObj = THYMELEAF_EXECUTION_OBJECTS[currentTypeName];
+        const method = execObj?.methods.find(
+          (m: ExecutionObjectMethod) => m.name === name || m.name.startsWith(`${name}(`)
+        );
+        if (method) {
+          currentTypeName = method.returnType;
+          lastProperty = undefined;
+          continue;
+        }
+        return {
+          typeName: currentTypeName,
+          property: undefined,
+          unresolved: { name, typeName: currentTypeName, offset: nameOffset },
+          consumedLength
+        };
+      }
+
+      const returnType = index.findMethodReturnType(currentTypeName, name);
       if (returnType) {
-        typeName = returnType;
+        currentTypeName = returnType;
         lastProperty = undefined;
         continue;
       }
     }
 
-    const property = index.findProperty(typeName, name);
-    if (!property) {
+    if (currentTypeName.startsWith("#")) {
+      const execObj = THYMELEAF_EXECUTION_OBJECTS[currentTypeName];
+      const method = execObj?.methods.find(
+        (m: ExecutionObjectMethod) => m.name === name || m.name.startsWith(`${name}(`)
+      );
+      if (method) {
+        currentTypeName = method.returnType;
+        lastProperty = undefined;
+        continue;
+      }
       return {
-        typeName,
+        typeName: currentTypeName,
         property: undefined,
-        unresolved: { name, typeName, offset: nameOffset },
+        unresolved: { name, typeName: currentTypeName, offset: nameOffset },
         consumedLength
       };
     }
-    typeName = property.typeName;
+
+    const property = index.findProperty(currentTypeName, name);
+    if (!property) {
+      return {
+        typeName: currentTypeName,
+        property: undefined,
+        unresolved: { name, typeName: currentTypeName, offset: nameOffset },
+        consumedLength
+      };
+    }
+    currentTypeName = property.typeName;
     lastProperty = property;
   }
 
-  return { typeName, property: lastProperty, unresolved: undefined, consumedLength };
+  return { typeName: currentTypeName, property: lastProperty, unresolved: undefined, consumedLength };
 }
 
 function readBalancedParentheses(text: string, openIndex: number): number {
@@ -348,95 +572,6 @@ function parseAssignment(
     });
   }
 }
-
-export interface ExecutionObjectMethod {
-  readonly name: string;
-  readonly returnType: string;
-  readonly documentation?: string;
-}
-
-export const THYMELEAF_EXECUTION_OBJECTS: Record<
-  string,
-  { readonly description: string; readonly methods: readonly ExecutionObjectMethod[] }
-> = {
-  "#numbers": {
-    description: "Utility methods for numeric objects: sequences, formatting, etc.",
-    methods: [
-      { name: "sequence(from, to)", returnType: "List<Integer>", documentation: "Generate a sequence of integers from `from` to `to` inclusive." },
-      { name: "sequence(from, to, step)", returnType: "List<Integer>", documentation: "Generate a sequence of integers with a given step." },
-      { name: "formatInteger(target, minIntegerDigits)", returnType: "String", documentation: "Format integer with minimum integer digits." },
-      { name: "formatDecimal(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format decimal number." },
-      { name: "formatPercent(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format percentage." }
-    ]
-  },
-  "#strings": {
-    description: "Utility methods for String objects: empty checks, substring, contains, etc.",
-    methods: [
-      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check whether a string is empty or null." },
-      { name: "defaultString(target, defaultValue)", returnType: "String", documentation: "Return default string if target is null or empty." },
-      { name: "contains(target, fragment)", returnType: "boolean", documentation: "Check whether a string contains a fragment." },
-      { name: "startsWith(target, prefix)", returnType: "boolean", documentation: "Check whether a string starts with a prefix." },
-      { name: "endsWith(target, suffix)", returnType: "boolean", documentation: "Check whether a string ends with a suffix." },
-      { name: "length(target)", returnType: "int", documentation: "Return the length of a string." },
-      { name: "toUpperCase(target)", returnType: "String", documentation: "Convert string to upper case." },
-      { name: "toLowerCase(target)", returnType: "String", documentation: "Convert string to lower case." },
-      { name: "capitalize(target)", returnType: "String", documentation: "Capitalize first character." },
-      { name: "trim(target)", returnType: "String", documentation: "Trim whitespace." },
-      { name: "replace(target, before, after)", returnType: "String", documentation: "Replace occurrences of substring." }
-    ]
-  },
-  "#dates": {
-    description: "Utility methods for java.util.Date objects.",
-    methods: [
-      { name: "format(target, pattern)", returnType: "String", documentation: "Format Date with pattern." },
-      { name: "day(target)", returnType: "int", documentation: "Get day of month." },
-      { name: "month(target)", returnType: "int", documentation: "Get month." },
-      { name: "year(target)", returnType: "int", documentation: "Get year." },
-      { name: "createNow()", returnType: "Date", documentation: "Get current Date." }
-    ]
-  },
-  "#temporals": {
-    description: "Utility methods for Java 8 java.time (LocalDate, LocalDateTime) objects.",
-    methods: [
-      { name: "format(target, pattern)", returnType: "String", documentation: "Format Temporal with pattern." },
-      { name: "day(target)", returnType: "int", documentation: "Get day." },
-      { name: "month(target)", returnType: "int", documentation: "Get month." },
-      { name: "year(target)", returnType: "int", documentation: "Get year." },
-      { name: "createNow()", returnType: "LocalDateTime", documentation: "Get current LocalDateTime." }
-    ]
-  },
-  "#lists": {
-    description: "Utility methods for java.util.List objects.",
-    methods: [
-      { name: "size(target)", returnType: "int", documentation: "Get size of list." },
-      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check if list is empty." },
-      { name: "contains(target, element)", returnType: "boolean", documentation: "Check if list contains element." },
-      { name: "sort(target)", returnType: "List", documentation: "Return sorted copy of list." }
-    ]
-  },
-  "#fields": {
-    description: "Spring Form validation and errors utility.",
-    methods: [
-      { name: "hasErrors(field)", returnType: "boolean", documentation: "Check if field has validation errors." },
-      { name: "errors(field)", returnType: "List<String>", documentation: "Get list of error messages for field." },
-      { name: "allErrors()", returnType: "List<String>", documentation: "Get all validation errors." }
-    ]
-  },
-  "#messages": {
-    description: "Utility methods for i18n messages.",
-    methods: [
-      { name: "msg(key)", returnType: "String", documentation: "Get message for key." },
-      { name: "msgWithParams(key, ...params)", returnType: "String", documentation: "Get parameterized message." }
-    ]
-  },
-  "#uris": {
-    description: "Utility methods for URI / URL escaping.",
-    methods: [
-      { name: "escapePath(path)", returnType: "String", documentation: "Escape URI path." },
-      { name: "escapeQueryParam(param)", returnType: "String", documentation: "Escape query param." }
-    ]
-  }
-};
 
 export function modelAttributeDefinition(
   templateName: string,

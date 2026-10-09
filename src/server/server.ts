@@ -13,7 +13,8 @@ import {
   DEFAULT_SETTINGS,
   provideCodeActions,
   ThymeleafSettings,
-  validateDocument
+  validateDocument,
+  validateJavaDocument
 } from "./features/diagnosticsProvider";
 import { provideCompletions } from "./features/completionProvider";
 import {
@@ -245,11 +246,17 @@ function refreshProjectIndex(): Promise<void> {
 }
 
 function validateAndPublish(document: TextDocument): void {
-  if (document.languageId !== "html") return;
-  connection.sendDiagnostics({
-    uri: document.uri,
-    diagnostics: validateDocument(document, projectIndex, settings)
-  });
+  if (document.languageId === "html") {
+    connection.sendDiagnostics({
+      uri: document.uri,
+      diagnostics: validateDocument(document, projectIndex, settings)
+    });
+  } else if (document.languageId === "java") {
+    connection.sendDiagnostics({
+      uri: document.uri,
+      diagnostics: validateJavaDocument(document, projectIndex)
+    });
+  }
 }
 
 function publishAllDiagnostics(): void {

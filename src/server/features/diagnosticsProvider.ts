@@ -17,7 +17,7 @@ import {
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
-import { normalizeTemplateName, ProjectIndex } from "../projectIndex";
+import { normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
 import {
   rangeAtOffset,
   resolveModelPath,
@@ -251,6 +251,39 @@ export function provideCodeActions(
           }
         }
       });
+    } else if (diagnostic.code === "missing-template" && rangesOverlap(diagnostic.range, range)) {
+      const match = /Template '([^']+)' was not found/.exec(diagnostic.message);
+      if (match) {
+        const templateName = match[1];
+        actions.push({
+          title: `Create template '${templateName}.html'`,
+          kind: CodeActionKind.QuickFix,
+          isPreferred: true,
+          diagnostics: [diagnostic],
+          command: {
+            title: `Create template '${templateName}.html'`,
+            command: "thymeleaf.createTemplate",
+            arguments: [templateName, document.uri]
+          }
+        });
+      }
+    } else if (diagnostic.code === "missing-controller-view" && rangesOverlap(diagnostic.range, range)) {
+      const match = /template '([^']+)' does not exist/.exec(diagnostic.message);
+      if (match) {
+        const templateFile = match[1];
+        const templateName = templateFile.replace(/\.html$/i, "");
+        actions.push({
+          title: `Create template '${templateFile}'`,
+          kind: CodeActionKind.QuickFix,
+          isPreferred: true,
+          diagnostics: [diagnostic],
+          command: {
+            title: `Create template '${templateFile}'`,
+            command: "thymeleaf.createTemplate",
+            arguments: [templateName, document.uri]
+          }
+        });
+      }
     } else if (diagnostic.code === "missing-message-key" && rangesOverlap(diagnostic.range, range)) {
       const match = /Message key '([^']+)' was not found/.exec(diagnostic.message);
       if (match) {
@@ -272,7 +305,68 @@ export function provideCodeActions(
       }
     }
   }
+
+  if (document.languageId === "java") {
+    for (const handler of index.controllerHandlers) {
+      if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
+      const normalized = normalizeTemplateName(handler.viewName);
+      if (index.findTemplate(normalized)) continue;
+
+      const handlerLine = handler.position.line;
+      const viewLine = handler.viewNameRange?.start.line ?? handlerLine;
+      const minLine = Math.min(handlerLine, viewLine);
+      const maxLine = Math.max(handlerLine, viewLine);
+      if (range.start.line >= minLine - 1 && range.start.line <= maxLine + 2) {
+        const title = `Create template '${normalized}.html'`;
+        if (!actions.some((a) => a.title === title)) {
+          actions.push({
+            title,
+            kind: CodeActionKind.QuickFix,
+            isPreferred: true,
+            command: {
+              title,
+              command: "thymeleaf.createTemplate",
+              arguments: [normalized, document.uri]
+            }
+          });
+        }
+      }
+    }
+  }
+
   return actions;
+}
+
+export function validateJavaDocument(
+  document: TextDocument,
+  index: ProjectIndex
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  for (const handler of index.controllerHandlers) {
+    if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
+    const normalized = normalizeTemplateName(handler.viewName);
+    const targetTemplate = index.findTemplate(normalized);
+    if (targetTemplate) continue;
+
+    const range = handler.viewNameRange
+      ? Range.create(
+          Position.create(handler.viewNameRange.start.line, handler.viewNameRange.start.character),
+          Position.create(handler.viewNameRange.end.line, handler.viewNameRange.end.character)
+        )
+      : Range.create(
+          Position.create(handler.position.line, 0),
+          Position.create(handler.position.line, 100)
+        );
+
+    diagnostics.push({
+      range,
+      severity: DiagnosticSeverity.Information,
+      code: "missing-controller-view",
+      source: "Thymeleaf",
+      message: `Thymeleaf template '${normalized}.html' does not exist.`
+    });
+  }
+  return diagnostics;
 }
 
 function validateModelProperties(
@@ -325,7 +419,7 @@ function validateModelProperties(
 }
 
 function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
-  if (/^[\w$]+(?:\.[\w$]+(?:\([^()]*\))?)*$/.test(body.trim())) {
+  if (/^[#\w$]+(?:\.[#\w$]+(?:\([^()]*\))?)*$/.test(body.trim())) {
     const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
     return [{ subPath: body.trim(), offset: leadingSpaces }];
   }
@@ -336,10 +430,10 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
     "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof"
   ]);
 
-  const pathRegex = /\b([a-zA-Z_$][\w$]*(?:\s*\.\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?)+)\b/g;
+  const pathRegex = /(?:#|[a-zA-Z_$])[\w$]*(?:\s*\.\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?)+/g;
   for (const match of body.matchAll(pathRegex)) {
     if (match.index === undefined) continue;
-    const pathStr = match[1];
+    const pathStr = match[0];
     const root = pathStr.split(".")[0]?.trim();
     if (root && !keywords.has(root)) {
       results.push({ subPath: pathStr, offset: match.index });
@@ -347,7 +441,7 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
   }
 
   if (results.length === 0) {
-    const simpleMatch = /^\s*([a-zA-Z_$][\w$]*)/.exec(body);
+    const simpleMatch = /^\s*([#a-zA-Z_$][\w$]*)/.exec(body);
     if (simpleMatch && !keywords.has(simpleMatch[1])) {
       results.push({ subPath: simpleMatch[1], offset: simpleMatch.index ?? 0 });
     }

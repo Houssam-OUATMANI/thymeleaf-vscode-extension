@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import {
@@ -59,7 +60,94 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
       const pos = new vscode.Position(line, character);
       await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
-    })
+    }),
+    vscode.commands.registerCommand(
+      "thymeleaf.createTemplate",
+      async (rawTemplateName?: string, originUri?: string) => {
+        try {
+          let templateName = rawTemplateName;
+          if (!templateName) {
+            templateName = await vscode.window.showInputBox({
+              prompt: "Enter the Thymeleaf template path to create (e.g. index or admin/users/index)",
+              placeHolder: "admin/users/index"
+            });
+            if (!templateName) return;
+          }
+
+          const normalizedName = templateName
+            .trim()
+            .replace(/\.html$/i, "")
+            .replaceAll("\\", "/")
+            .replace(/^\/+/, "");
+
+          if (!normalizedName) {
+            vscode.window.showErrorMessage("Invalid Thymeleaf template name.");
+            return;
+          }
+
+          let workspaceFolder: vscode.WorkspaceFolder | undefined;
+          if (originUri) {
+            try {
+              workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(originUri));
+            } catch {
+              // ignore parse errors
+            }
+          }
+          if (!workspaceFolder && vscode.window.activeTextEditor) {
+            workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+          }
+          if (!workspaceFolder && vscode.workspace.workspaceFolders?.length) {
+            workspaceFolder = vscode.workspace.workspaceFolders[0];
+          }
+          if (!workspaceFolder) {
+            vscode.window.showErrorMessage("No workspace folder found to create the template.");
+            return;
+          }
+
+          const config = vscode.workspace.getConfiguration("thymeleaf", workspaceFolder.uri);
+          const locations: string[] = config.get("templateLocations") || ["src/main/resources/templates"];
+          const primaryLocation = locations[0] || "src/main/resources/templates";
+
+          const templateBaseDir = path.resolve(workspaceFolder.uri.fsPath, primaryLocation);
+          const targetFilePath = path.resolve(templateBaseDir, `${normalizedName}.html`);
+          const targetFileDir = path.dirname(targetFilePath);
+
+          await fs.promises.mkdir(targetFileDir, { recursive: true });
+
+          let fileExisted = false;
+          try {
+            await fs.promises.access(targetFilePath);
+            fileExisted = true;
+          } catch {
+            const titleName = path.basename(normalizedName);
+            const initialContent = `<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>${titleName}</title>
+</head>
+<body>
+
+</body>
+</html>
+`;
+            await fs.promises.writeFile(targetFilePath, initialContent, "utf8");
+          }
+
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetFilePath));
+          await vscode.window.showTextDocument(doc);
+
+          if (!fileExisted) {
+            vscode.window.showInformationMessage(
+              `Thymeleaf template '${normalizedName}.html' created.`
+            );
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`Failed to create template: ${message}`);
+        }
+      }
+    )
   );
 
   const gutterDecorationType = vscode.window.createTextEditorDecorationType({

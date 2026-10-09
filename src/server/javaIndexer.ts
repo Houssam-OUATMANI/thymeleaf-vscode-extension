@@ -44,6 +44,7 @@ export interface ControllerHandler {
   readonly name: string;
   readonly routePaths: readonly string[];
   readonly viewName: string | undefined;
+  readonly viewNameRange?: { readonly start: SourcePosition; readonly end: SourcePosition };
   readonly position: SourcePosition;
   readonly modelAttributes: ReadonlyMap<string, string>;
   readonly modelAttributePositions: ReadonlyMap<string, SourcePosition>;
@@ -373,6 +374,12 @@ function parseJavaSource(
         name: member.name,
         routePaths: effectiveRoutePaths,
         viewName: member.viewName,
+        viewNameRange: member.viewNameOffsets
+          ? {
+              start: positionAt(source, member.viewNameOffsets.start),
+              end: positionAt(source, member.viewNameOffsets.end)
+            }
+          : undefined,
         position: positionAt(source, tokens[member.nameTokenIndex].start),
         modelAttributes,
         modelAttributePositions,
@@ -410,6 +417,7 @@ type ClassMember =
       readonly modelAttributeName: string | undefined;
       readonly addedModelVariables: readonly [string, string, number][];
       readonly viewName: string | undefined;
+      readonly viewNameOffsets?: { readonly start: number; readonly end: number };
       readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
     };
 
@@ -534,7 +542,9 @@ function parseMethod(
     ([attributeName, variableName, tokenIndex]) =>
       [attributeName, variableName, tokenIndex + methodBodyStart + 1] as [string, string, number]
   );
-  const viewName = findReturnedView(methodBody);
+  const returnedView = findReturnedView(methodBody);
+  const viewName = returnedView?.name;
+  const viewNameOffsets = returnedView ? { start: returnedView.start, end: returnedView.end } : undefined;
   const modelAnnotation = annotations.find(({ name }) => name === "ModelAttribute");
 
   return {
@@ -548,6 +558,7 @@ function parseMethod(
     modelAttributeName: modelAnnotation?.stringArguments[0] ?? (modelAnnotation ? name : undefined),
     addedModelVariables,
     viewName,
+    viewNameOffsets,
     typeReferences
   };
 }
@@ -848,19 +859,83 @@ function combinePaths(prefixes: readonly string[], suffixes: readonly string[]):
   return left.flatMap((prefix) => right.map((suffix) => `/${prefix}/${suffix}`.replace(/\/+/g, "/")));
 }
 
-function findReturnedView(body: readonly Token[]): string | undefined {
+function findReturnedView(
+  body: readonly Token[]
+): { readonly name: string; readonly start: number; readonly end: number } | undefined {
+  // 1. Direct return: return "viewName", return ("viewName"), or return new ModelAndView("viewName" ...)
   for (let index = 0; index < body.length - 1; index += 1) {
-    if (body[index].text !== "return" || body[index + 1].kind !== "string") continue;
-    const value = body[index + 1].text;
-    return value.startsWith("redirect:") || value.startsWith("forward:") ? undefined : value;
+    if (body[index].text === "return") {
+      let nextIndex = index + 1;
+      while (nextIndex < body.length && body[nextIndex].text === "(") nextIndex += 1;
+      if (body[nextIndex]?.kind === "string") {
+        const value = body[nextIndex].text;
+        if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
+          return {
+            name: value,
+            start: body[nextIndex].start,
+            end: body[nextIndex].end
+          };
+        }
+      }
+      if (
+        body[nextIndex]?.text === "new" &&
+        body[nextIndex + 1]?.text === "ModelAndView" &&
+        body[nextIndex + 2]?.text === "(" &&
+        body[nextIndex + 3]?.kind === "string"
+      ) {
+        const value = body[nextIndex + 3].text;
+        if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
+          return {
+            name: value,
+            start: body[nextIndex + 3].start,
+            end: body[nextIndex + 3].end
+          };
+        }
+      }
+    }
   }
+
+  // 2. setViewName("viewName") anywhere in method body
+  for (let index = 0; index < body.length - 2; index += 1) {
+    if (body[index].text === "setViewName" && body[index + 1].text === "(" && body[index + 2].kind === "string") {
+      const value = body[index + 2].text;
+      if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
+        return {
+          name: value,
+          start: body[index + 2].start,
+          end: body[index + 2].end
+        };
+      }
+    }
+  }
+
+  // 3. new ModelAndView("viewName" ...) anywhere in method body
+  for (let index = 0; index < body.length - 3; index += 1) {
+    if (
+      body[index].text === "new" &&
+      body[index + 1].text === "ModelAndView" &&
+      body[index + 2].text === "(" &&
+      body[index + 3].kind === "string"
+    ) {
+      const value = body[index + 3].text;
+      if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
+        return {
+          name: value,
+          start: body[index + 3].start,
+          end: body[index + 3].end
+        };
+      }
+    }
+  }
+
   return undefined;
 }
 
 function findAddedModelVariables(body: readonly Token[]): [string, string, number][] {
   const attributes: [string, string, number][] = [];
   for (let index = 0; index < body.length - 4; index += 1) {
-    if (body[index].text !== "addAttribute" || body[index + 1].text !== "(") continue;
+    const isModelAdd = body[index].text === "addAttribute" || body[index].text === "addObject";
+    if (!isModelAdd || body[index + 1].text !== "(") continue;
     const callEnd = findMatching(body, index + 1, "(", ")");
     if (callEnd < 0) continue;
     const nameTokenIndex = index + 2;
@@ -871,7 +946,7 @@ function findAddedModelVariables(body: readonly Token[]): [string, string, numbe
     if (commaIndex >= callEnd || commaIndex + 1 >= callEnd) continue;
 
     const expressionTokens = body.slice(commaIndex + 1, callEnd).filter(({ text }) => text !== ";");
-    const expression = expressionTokens.map(({ text }) => text).join("");
+    const expression = expressionTokens.map(({ text, kind }) => kind === "string" ? `"${text}"` : text).join("");
     if (expression) attributes.push([body[nameTokenIndex].text, expression, nameTokenIndex]);
     index = callEnd;
   }
@@ -895,6 +970,26 @@ export function inferModelExpressionType(
     return genericStart < 0
       ? qualifiedName
       : `${qualifiedName}${rawType.slice(genericStart)}`;
+  }
+
+  // String literal: "value"
+  if (/^"[^"]*"$/.test(expression)) {
+    return "java.lang.String";
+  }
+
+  // Numeric literal: integer / long
+  if (/^\d+[Ll]?$/.test(expression)) {
+    return /[Ll]$/.test(expression) ? "java.lang.Long" : "java.lang.Integer";
+  }
+
+  // Numeric literal: float / double
+  if (/^\d+\.?\d*[fFdD]$/.test(expression) || /^\d+\.\d+$/.test(expression)) {
+    return /[fF]$/.test(expression) ? "java.lang.Float" : "java.lang.Double";
+  }
+
+  // Boolean literal
+  if (expression === "true" || expression === "false") {
+    return "java.lang.Boolean";
   }
 
   const collectionFactory = /^(?:(?:java\.util\.)?(List|Set|Collection)\.of|(?:java\.util\.)?Arrays\.asList)\s*\(([\s\S]*)\)$/.exec(expression);

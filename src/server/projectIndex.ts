@@ -971,5 +971,23 @@ const BUILTIN_TYPE_PROPERTIES = new Map<string, JavaProperty[]>([
     createBuiltinProperty("empty", "boolean"),
     createBuiltinProperty("isEmpty()", "boolean"),
     createBuiltinProperty("get()", "java.lang.Object")
+  ]],
+  ["IterStatus", [
+    createBuiltinProperty("index", "int"),
+    createBuiltinProperty("getIndex()", "int"),
+    createBuiltinProperty("count", "int"),
+    createBuiltinProperty("getCount()", "int"),
+    createBuiltinProperty("size", "int"),
+    createBuiltinProperty("getSize()", "int"),
+    createBuiltinProperty("current", "java.lang.Object"),
+    createBuiltinProperty("getCurrent()", "java.lang.Object"),
+    createBuiltinProperty("even", "boolean"),
+    createBuiltinProperty("isEven()", "boolean"),
+    createBuiltinProperty("odd", "boolean"),
+    createBuiltinProperty("isOdd()", "boolean"),
+    createBuiltinProperty("first", "boolean"),
+    createBuiltinProperty("isFirst()", "boolean"),
+    createBuiltinProperty("last", "boolean"),
+    createBuiltinProperty("isLast()", "boolean")
   ]]
 ]);

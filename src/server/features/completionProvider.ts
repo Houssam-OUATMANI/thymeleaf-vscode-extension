@@ -10,6 +10,10 @@ import {
 } from "vscode-languageserver/node";
 import { THYMELEAF_ATTRIBUTES } from "../../thymeleaf/attributes";
 import {
+  getHtmlAttributesForTag,
+  TAG_SPECIFIC_HTML_ATTRIBUTES
+} from "../../thymeleaf/htmlAttributes";
+import {
   findEnclosingExpression,
   findEnclosingLoopVariables,
   findSelectedObjectType,
@@ -237,28 +241,73 @@ export function provideCompletions(
   if (isInsideTag(text, offset) && !isInsideAttributeValue(text, offset)) {
     const attributeContext = findAttributeNameContext(text, offset);
     if (!attributeContext) return [];
-    const isDataThAttribute = attributeContext.prefix.startsWith("data-th-");
-    const attributePrefix = isDataThAttribute
-      ? `th:${attributeContext.prefix.slice("data-th-".length)}`
-      : attributeContext.prefix;
-    return prioritizeThymeleaf(THYMELEAF_ATTRIBUTES
-      .filter(({ name }) => name.startsWith(attributePrefix))
-      .map(({ name, description, value }) => {
-        const completionName = isDataThAttribute
-          ? `data-th-${name.slice("th:".length)}`
-          : name;
-        return {
+
+    const { tagName, prefix, startOffset } = attributeContext;
+    const lowerPrefix = prefix.toLowerCase();
+    const isDataTh = lowerPrefix.startsWith("data-th-");
+    const isTh = lowerPrefix.startsWith("th:");
+    const items: CompletionItem[] = [];
+
+    const thPrefix = isDataTh
+      ? `th:${lowerPrefix.slice("data-th-".length)}`
+      : lowerPrefix;
+
+    for (const { name, description, value } of THYMELEAF_ATTRIBUTES) {
+      const lowerName = name.toLowerCase();
+      const rawName = lowerName.slice("th:".length);
+
+      let matches = false;
+      if (isDataTh) {
+        matches = lowerName.startsWith(thPrefix);
+      } else if (isTh) {
+        matches = lowerName.startsWith(lowerPrefix);
+      } else {
+        matches = lowerName.startsWith(lowerPrefix) || rawName.startsWith(lowerPrefix);
+      }
+
+      if (matches) {
+        const completionName = isDataTh ? `data-th-${rawName}` : name;
+        items.push({
           label: completionName,
           kind: CompletionItemKind.Property,
           detail: value,
           documentation: description,
           textEdit: TextEdit.replace(
-            Range.create(document.positionAt(attributeContext.startOffset), position),
+            Range.create(document.positionAt(startOffset), position),
             `${completionName}="$1"`
           ),
-          insertTextFormat: 2
-        };
-      }));
+          insertTextFormat: 2,
+          sortText: `0000_0_${completionName}`
+        });
+      }
+    }
+
+    if (!isTh && !isDataTh) {
+      const htmlAttributes = getHtmlAttributesForTag(tagName);
+      const specificAttributes = TAG_SPECIFIC_HTML_ATTRIBUTES[tagName] ?? [];
+      const specificNames = new Set(specificAttributes.map((a) => a.name));
+
+      for (const attr of htmlAttributes) {
+        if (attr.name.toLowerCase().startsWith(lowerPrefix)) {
+          const isSpecific = specificNames.has(attr.name);
+          const snippet = attr.isBoolean ? `${attr.name}` : `${attr.name}="$1"`;
+          items.push({
+            label: attr.name,
+            kind: CompletionItemKind.Property,
+            detail: isSpecific ? `<${tagName}> HTML attribute` : "HTML attribute",
+            documentation: attr.description,
+            textEdit: TextEdit.replace(
+              Range.create(document.positionAt(startOffset), position),
+              snippet
+            ),
+            insertTextFormat: 2,
+            sortText: isSpecific ? `0000_1_${attr.name}` : `0000_2_${attr.name}`
+          });
+        }
+      }
+    }
+
+    return prioritizeThymeleaf(items);
   }
   return [];
 }
@@ -296,7 +345,7 @@ function findSelectionPropertyContext(
 function prioritizeThymeleaf(items: CompletionItem[]): CompletionItem[] {
   return items.map((item, index) => ({
     ...item,
-    sortText: `0000_${item.label}`,
+    sortText: item.sortText ?? `0000_${item.label}`,
     ...(index === 0 ? { preselect: true } : {})
   }));
 }
@@ -390,7 +439,7 @@ function isInsideTag(text: string, offset: number): boolean {
 function findAttributeNameContext(
   text: string,
   offset: number
-): { readonly prefix: string; readonly startOffset: number } | undefined {
+): { readonly tagName: string; readonly prefix: string; readonly startOffset: number } | undefined {
   const tagStart = text.lastIndexOf("<", offset);
   if (tagStart < 0) return undefined;
   const beforeCursor = text.slice(tagStart + 1, offset);
@@ -401,6 +450,7 @@ function findAttributeNameContext(
   if (!current || current.index === undefined) return undefined;
   const prefix = current[1] ?? "";
   return {
+    tagName: tagName.toLowerCase(),
     prefix,
     startOffset: offset - prefix.length
   };

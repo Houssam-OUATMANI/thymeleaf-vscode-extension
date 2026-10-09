@@ -51,6 +51,13 @@
   ],
   "main": "./dist/client.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "thymeleaf.createTemplate",
+        "title": "Create Template",
+        "category": "Thymeleaf"
+      }
+    ],
     "configuration": {
       "title": "Thymeleaf",
       "properties": {
