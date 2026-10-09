@@ -680,24 +680,27 @@ function findLocalVariables(
         const typeInfo = findDeclaredTypeInfo(body, statementStart, nameIndex);
         let typeName = typeInfo?.typeName;
         let expression: string | undefined;
+        let typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[] = [];
         if (typeName === "var") {
           if (body[i + 1]?.text === "new" && isIdentifier(body[i + 2])) {
             typeName = body[i + 2].text;
           } else {
             const semi = body.findIndex((t, idx) => idx > i && t.text === ";" && pDepth === 0);
             if (semi > i + 1) {
-              expression = body.slice(i + 1, semi).map((t) => t.text).join("");
+              expression = javaExpressionFromTokens(body.slice(i + 1, semi));
+              typeReferences = getStaticFactoryTypeReferences(body, i + 1, semi);
             }
           }
+        }
+        if (typeInfo && typeInfo.typeName !== "var") {
+          typeReferences = getTypeReferencesInRange(body, typeInfo.startTokenIndex, nameIndex);
         }
         if (typeName) {
           variables.set(varName, {
             typeName,
             expression,
             tokenIndex: nameIndex,
-            typeReferences: typeInfo && typeInfo.typeName !== "var"
-              ? getTypeReferencesInRange(body, typeInfo.startTokenIndex, nameIndex)
-              : []
+            typeReferences
           });
         }
       }
@@ -766,6 +769,25 @@ function getTypeReferencesInRange(
     const typeName = tokens.slice(index, lastIndex + 1).map(({ text }) => text).join("");
     if (!isPrimitiveJavaType(typeName)) references.push({ typeName, tokenIndex: lastIndex });
     index = lastIndex;
+  }
+  return references;
+}
+
+function getStaticFactoryTypeReferences(
+  tokens: readonly Token[],
+  start: number,
+  end: number
+): { readonly typeName: string; readonly tokenIndex: number }[] {
+  const references: { readonly typeName: string; readonly tokenIndex: number }[] = [];
+  for (let index = start; index + 3 < end; index += 1) {
+    if (
+      tokens[index].kind !== "identifier" ||
+      !/^[A-Z]/.test(tokens[index].text) ||
+      tokens[index + 1]?.text !== "." ||
+      tokens[index + 2]?.kind !== "identifier" ||
+      tokens[index + 3]?.text !== "("
+    ) continue;
+    references.push({ typeName: tokens[index].text, tokenIndex: index });
   }
   return references;
 }
@@ -946,11 +968,17 @@ function findAddedModelVariables(body: readonly Token[]): [string, string, numbe
     if (commaIndex >= callEnd || commaIndex + 1 >= callEnd) continue;
 
     const expressionTokens = body.slice(commaIndex + 1, callEnd).filter(({ text }) => text !== ";");
-    const expression = expressionTokens.map(({ text, kind }) => kind === "string" ? `"${text}"` : text).join("");
+    const expression = javaExpressionFromTokens(expressionTokens);
     if (expression) attributes.push([body[nameTokenIndex].text, expression, nameTokenIndex]);
     index = callEnd;
   }
   return attributes;
+}
+
+function javaExpressionFromTokens(tokens: readonly Token[]): string {
+  return tokens.map(({ text, kind }) =>
+    kind === "string" ? JSON.stringify(text) : text
+  ).join("");
 }
 
 export function inferModelExpressionType(
@@ -1008,6 +1036,32 @@ export function inferModelExpressionType(
 
   const tokens = tokenizeJava(expression);
   if (tokens.length === 0) return undefined;
+  for (let index = 0; index + 3 < tokens.length; index += 1) {
+    const typeToken = tokens[index];
+    const methodToken = tokens[index + 2];
+    if (
+      typeToken?.kind !== "identifier" ||
+      !/^[A-Z]/.test(typeToken.text) ||
+      tokens[index + 1]?.text !== "." ||
+      methodToken?.kind !== "identifier" ||
+      tokens[index + 3]?.text !== "("
+    ) continue;
+    const javaClass = classesByName.get(typeToken.text);
+    if (!javaClass) continue;
+    const close = findMatching(tokens, index + 3, "(", ")");
+    if (close < 0) continue;
+    const argumentCount = splitTopLevelArguments(
+      expression.slice(tokens[index + 3].end, tokens[close].start)
+    ).length;
+    const returnType = resolveMethodReturnType(
+      javaClass.qualifiedName,
+      methodToken.text,
+      classesByName,
+      argumentCount
+    );
+    if (returnType) return returnType;
+  }
+
   const owner = classesByName.get(handler.ownerType);
   if (!owner) return undefined;
 

@@ -713,6 +713,103 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
   }
 });
 
+test("completes model properties for var values from Java time factory methods", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-time-model-"));
+  const templateRoot = path.join(root, "src", "main", "resources", "templates");
+  const javaRoot = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templateRoot, "time.html");
+  const controllerPath = path.join(javaRoot, "TimeController.java");
+  const template = `<time th:text="\${instant.}"></time>
+<time th:text="\${localDateTime.}"></time>
+<span th:text="\${str.}"></span>
+<span th:each="item: \${strings}" th:text="\${item.}"></span>`;
+  try {
+    await Promise.all([
+      mkdir(templateRoot, { recursive: true }),
+      mkdir(javaRoot, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, template),
+      writeFile(controllerPath, `package demo;
+import java.time.Instant;
+import java.time.LocalDateTime;
+@Controller class TimeController {
+  @GetMapping("/time")
+  String time(Model model) {
+    var now = Instant.now();
+    var now2 = LocalDateTime.now();
+    var str = "azeazeazeza";
+    var strings = List.of("one", "two");
+    model.addAttribute("instant", now);
+    model.addAttribute("localDateTime", now2);
+    model.addAttribute("str", str);
+    model.addAttribute("strings", strings);
+    return "time";
+  }
+}`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    assert.ok(index.unresolvedJavaTypeReferences.some(({ typeName }) => typeName === "Instant"));
+    assert.ok(index.unresolvedJavaTypeReferences.some(({ typeName }) => typeName === "LocalDateTime"));
+
+    index.addCompilerJavaTypes([{
+      alias: "Instant",
+      name: "Instant",
+      uri: "jdt://contents/jdk/java/time/Instant.class",
+      position: { line: 0, character: 0 },
+      properties: [],
+      methods: [
+        { name: "now", returnType: "Instant", parameterCount: 0 },
+        { name: "getEpochSecond", returnType: "long", parameterCount: 0, position: { line: 1, character: 0 } }
+      ]
+    }, {
+      alias: "LocalDateTime",
+      name: "LocalDateTime",
+      uri: "jdt://contents/jdk/java/time/LocalDateTime.class",
+      position: { line: 0, character: 0 },
+      properties: [],
+      methods: [
+        { name: "now", returnType: "LocalDateTime", parameterCount: 0 },
+        { name: "getDayOfMonth", returnType: "int", parameterCount: 0, position: { line: 1, character: 0 } }
+      ]
+    }]);
+
+    assert.equal(index.modelAttributesForTemplate("time").get("instant"), "Instant");
+    assert.equal(index.modelAttributesForTemplate("time").get("localDateTime"), "LocalDateTime");
+    assert.equal(index.modelAttributesForTemplate("time").get("str"), "java.lang.String");
+    assert.equal(index.modelAttributesForTemplate("time").get("strings"), "List<java.lang.String>");
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+    const instantCompletions = provideCompletions(
+      document,
+      document.positionAt(template.indexOf("instant.") + "instant.".length),
+      index
+    );
+    const dateTimeCompletions = provideCompletions(
+      document,
+      document.positionAt(template.indexOf("localDateTime.") + "localDateTime.".length),
+      index
+    );
+    const stringCompletions = provideCompletions(
+      document,
+      document.positionAt(template.indexOf("str.") + "str.".length),
+      index
+    );
+    const listItemCompletions = provideCompletions(
+      document,
+      document.positionAt(template.indexOf("item.") + "item.".length),
+      index
+    );
+    assert.ok(instantCompletions.some(({ label }) => label === "epochSecond"));
+    assert.ok(dateTimeCompletions.some(({ label }) => label === "dayOfMonth"));
+    assert.ok(stringCompletions.some(({ label }) => label === "length()"));
+    assert.ok(listItemCompletions.some(({ label }) => label === "length()"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("navigates to inherited dependency methods and completes no-argument methods", async () => {
   const fixture = await createFixture();
   try {

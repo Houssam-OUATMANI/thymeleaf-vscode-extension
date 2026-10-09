@@ -12,7 +12,8 @@ All notable changes to this project are documented in this file.
 
 ### Improved
 
-- Improve Java indexing and model-type inference for Thymeleaf completion and validation.
+- Improve Java indexing and model-type inference for Thymeleaf completion and validation, including `var` values initialized with literals, collection factories, and resolvable static factory methods.
+- Complete Java-backed model properties for inferred JDK types such as `String`, `Instant`, and `LocalDateTime`.
 
 ## [0.4.0] - 2026-10-07
 
