@@ -147,6 +147,67 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           vscode.window.showErrorMessage(`Failed to create template: ${message}`);
         }
       }
+    ),
+    vscode.commands.registerCommand(
+      "thymeleaf.extractFragment",
+      async (uriArg?: string, rangeArg?: { start: { line: number; character: number }; end: { line: number; character: number } }) => {
+        try {
+          let editor = vscode.window.activeTextEditor;
+          if (uriArg && (!editor || editor.document.uri.toString() !== uriArg)) {
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriArg));
+            editor = await vscode.window.showTextDocument(doc);
+          }
+          if (!editor) return;
+
+          let range: vscode.Range;
+          if (rangeArg) {
+            range = new vscode.Range(
+              new vscode.Position(rangeArg.start.line, rangeArg.start.character),
+              new vscode.Position(rangeArg.end.line, rangeArg.end.character)
+            );
+          } else {
+            range = editor.selection;
+          }
+
+          if (range.isEmpty) {
+            vscode.window.showWarningMessage("Please select HTML content to extract into a fragment.");
+            return;
+          }
+
+          const fragmentName = await vscode.window.showInputBox({
+            prompt: "Enter the Thymeleaf fragment name",
+            placeHolder: "myFragment",
+            value: "myFragment"
+          });
+          if (!fragmentName || !fragmentName.trim()) return;
+
+          const trimmedName = fragmentName.trim();
+          const doc = editor.document;
+          const selectedHtml = doc.getText(range);
+
+          const replaceText = `<div th:replace="~{::${trimmedName}}"></div>`;
+          const fragmentDeclaration = `\n<div th:fragment="${trimmedName}">\n${selectedHtml}\n</div>\n`;
+
+          const fullText = doc.getText();
+          const bodyCloseIndex = fullText.lastIndexOf("</body>");
+
+          await editor.edit((editBuilder) => {
+            editBuilder.replace(range, replaceText);
+            if (bodyCloseIndex >= 0) {
+              const insertPos = doc.positionAt(bodyCloseIndex);
+              editBuilder.insert(insertPos, fragmentDeclaration);
+            } else {
+              const lastPos = doc.positionAt(fullText.length);
+              editBuilder.insert(lastPos, fragmentDeclaration);
+            }
+          });
+
+          vscode.window.showInformationMessage(`Fragment '${trimmedName}' extracted successfully.`);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(`Failed to extract fragment: ${message}`);
+        }
+      }
     )
   );
 

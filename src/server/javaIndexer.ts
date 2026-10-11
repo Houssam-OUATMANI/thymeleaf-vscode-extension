@@ -12,11 +12,13 @@ export interface JavaProperty {
   readonly position: SourcePosition;
   readonly renameable?: boolean;
   readonly parameterCount?: number;
+  readonly javadoc?: string;
 }
 
 export interface JavaMethodSignature {
   readonly typeName: string;
   readonly parameterCount?: number;
+  readonly javadoc?: string;
 }
 
 export interface JavaClass {
@@ -31,6 +33,7 @@ export interface JavaClass {
   readonly typeParameters?: readonly string[];
   readonly superClassName?: string;
   readonly superTypeNames?: readonly string[];
+  readonly javadoc?: string;
 }
 
 export interface JavaTypeReference {
@@ -63,6 +66,7 @@ interface Token {
   readonly kind: "identifier" | "string" | "symbol";
   readonly start: number;
   readonly end: number;
+  readonly leadingJavadoc?: string;
 }
 
 interface Annotation {
@@ -79,6 +83,7 @@ interface ParsedParameter {
   readonly modelAttributeOffset: number | undefined;
   readonly nameTokenIndex: number;
   readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
+  readonly javadoc?: string;
 }
 
 const CONTROLLER_ANNOTATIONS = new Set(["Controller", "RestController"]);
@@ -199,7 +204,8 @@ function parseJavaSource(
               typeName: param.typeName,
               uri,
               position: positionAt(source, tokens[param.nameTokenIndex].start),
-              renameable: true
+              renameable: true,
+              ...(param.javadoc !== undefined && { javadoc: param.javadoc })
             });
             methodReturnTypes.set(param.name, param.typeName);
             const getter = `get${param.name[0].toUpperCase()}${param.name.slice(1)}`;
@@ -217,7 +223,8 @@ function parseJavaSource(
           typeName: member.typeName,
           uri,
           position: positionAt(source, tokens[member.nameTokenIndex].start),
-          renameable: true
+          renameable: true,
+          ...(member.javadoc !== undefined && { javadoc: member.javadoc })
         });
       } else {
         const candidates = methodCandidates.get(member.name) ?? [];
@@ -227,18 +234,28 @@ function parseJavaSource(
           uri,
           position: positionAt(source, tokens[member.nameTokenIndex].start),
           renameable: true,
-          parameterCount: member.parameters.length
+          parameterCount: member.parameters.length,
+          ...(member.javadoc !== undefined && { javadoc: member.javadoc })
         });
         methodCandidates.set(member.name, candidates);
         const getterProperty = getterPropertyName(member.name);
-        if (getterProperty && member.returnType !== "void" && !properties.has(getterProperty)) {
-          properties.set(getterProperty, {
-            name: getterProperty,
-            typeName: member.returnType,
-            uri,
-            position: positionAt(source, tokens[member.nameTokenIndex].start),
-            renameable: false
-          });
+        if (getterProperty && member.returnType !== "void") {
+          const existing = properties.get(getterProperty);
+          if (!existing) {
+            properties.set(getterProperty, {
+              name: getterProperty,
+              typeName: member.returnType,
+              uri,
+              position: positionAt(source, tokens[member.nameTokenIndex].start),
+              renameable: false,
+              ...(member.javadoc !== undefined && { javadoc: member.javadoc })
+            });
+          } else if (member.javadoc && !existing.javadoc) {
+            properties.set(getterProperty, {
+              ...existing,
+              javadoc: member.javadoc
+            });
+          }
         }
       }
     }
@@ -400,6 +417,7 @@ type ClassMember =
       readonly typeName: string;
       readonly nameTokenIndex: number;
       readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
+      readonly javadoc?: string;
     }
   | {
       readonly kind: "method";
@@ -419,6 +437,7 @@ type ClassMember =
       readonly viewName: string | undefined;
       readonly viewNameOffsets?: { readonly start: number; readonly end: number };
       readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
+      readonly javadoc?: string;
     };
 
 function readClassMembers(tokens: readonly Token[], bodyStart: number, bodyEnd: number): ClassMember[] {
@@ -546,6 +565,7 @@ function parseMethod(
   const viewName = returnedView?.name;
   const viewNameOffsets = returnedView ? { start: returnedView.start, end: returnedView.end } : undefined;
   const modelAnnotation = annotations.find(({ name }) => name === "ModelAttribute");
+  const javadoc = tokens.slice(memberStart, nameTokenIndex).find((t) => t.leadingJavadoc)?.leadingJavadoc;
 
   return {
     kind: "method",
@@ -559,7 +579,8 @@ function parseMethod(
     addedModelVariables,
     viewName,
     viewNameOffsets,
-    typeReferences
+    typeReferences,
+    ...(javadoc !== undefined && { javadoc })
   };
 }
 
@@ -597,13 +618,15 @@ function parseField(
 
   const typeInfo = findDeclaredTypeInfo(tokens, start, nameTokenIndex);
   if (!typeInfo) return undefined;
+  const javadoc = tokens.slice(start, nameTokenIndex).find((t) => t.leadingJavadoc)?.leadingJavadoc;
 
   return {
     kind: "field",
     name: tokens[nameTokenIndex].text,
     typeName: typeInfo.typeName,
     nameTokenIndex,
-    typeReferences: getTypeReferencesInRange(tokens, typeInfo.startTokenIndex, nameTokenIndex)
+    typeReferences: getTypeReferencesInRange(tokens, typeInfo.startTokenIndex, nameTokenIndex),
+    ...(javadoc !== undefined && { javadoc })
   };
 }
 
@@ -630,6 +653,7 @@ function parseParameters(tokens: readonly Token[], start: number, end: number): 
     if (!typeInfo) continue;
     const annotations = readAnnotations(tokens, segmentStart, nameTokenIndex);
     const modelAnnotation = annotations.find(({ name }) => name === "ModelAttribute");
+    const javadoc = tokens.slice(segmentStart, nameTokenIndex).find((t) => t.leadingJavadoc)?.leadingJavadoc;
     parameters.push({
       name: tokens[nameTokenIndex].text,
       typeName: typeInfo.typeName,
@@ -638,7 +662,8 @@ function parseParameters(tokens: readonly Token[], start: number, end: number): 
         ? tokens[modelAnnotation.stringArgumentOffsets[0]]?.start
         : undefined,
       nameTokenIndex,
-      typeReferences: getTypeReferencesInRange(tokens, typeInfo.startTokenIndex, nameTokenIndex)
+      typeReferences: getTypeReferencesInRange(tokens, typeInfo.startTokenIndex, nameTokenIndex),
+      ...(javadoc !== undefined && { javadoc })
     });
   }
 
@@ -1343,9 +1368,21 @@ function isSpringInfrastructureType(typeName: string): boolean {
   ]).has(typeName.split(".").at(-1) ?? typeName);
 }
 
+export function cleanJavadoc(raw: string): string {
+  return raw
+    .replace(/^\/\*\*+/, "")
+    .replace(/\*+\/$/, "")
+    .split("\n")
+    .map((line) => line.trim().replace(/^\*\s?/, ""))
+    .join("\n")
+    .trim();
+}
+
 function tokenizeJava(source: string): Token[] {
   const tokens: Token[] = [];
   let index = 0;
+  let pendingJavadoc: string | undefined;
+
   while (index < source.length) {
     const start = index;
     const character = source[index];
@@ -1359,11 +1396,21 @@ function tokenizeJava(source: string): Token[] {
       continue;
     }
     if (character === "/" && source[index + 1] === "*") {
+      const isJavadoc = source[index + 2] === "*" && source[index + 3] !== "/";
+      const commentStart = index;
       index += 2;
       while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
-      index = Math.min(source.length, index + 2);
+      const commentEnd = Math.min(source.length, index + 2);
+      index = commentEnd;
+      if (isJavadoc) {
+        pendingJavadoc = cleanJavadoc(source.slice(commentStart, commentEnd));
+      }
       continue;
     }
+
+    const javadocToAttach = pendingJavadoc;
+    pendingJavadoc = undefined;
+
     if (character === '"' || character === "'") {
       const quote = character;
       index += 1;
@@ -1380,16 +1427,36 @@ function tokenizeJava(source: string): Token[] {
           index += 1;
         }
       }
-      if (quote === '"') tokens.push({ text: value, kind: "string", start, end: index });
+      if (quote === '"') {
+        tokens.push({
+          text: value,
+          kind: "string",
+          start,
+          end: index,
+          ...(javadocToAttach !== undefined && { leadingJavadoc: javadocToAttach })
+        });
+      }
       continue;
     }
     if (/[A-Za-z_$]/.test(character)) {
       index += 1;
       while (index < source.length && /[\w$]/.test(source[index])) index += 1;
-      tokens.push({ text: source.slice(start, index), kind: "identifier", start, end: index });
+      tokens.push({
+        text: source.slice(start, index),
+        kind: "identifier",
+        start,
+        end: index,
+        ...(javadocToAttach !== undefined && { leadingJavadoc: javadocToAttach })
+      });
       continue;
     }
-    tokens.push({ text: character, kind: "symbol", start, end: ++index });
+    tokens.push({
+      text: character,
+      kind: "symbol",
+      start,
+      end: ++index,
+      ...(javadocToAttach !== undefined && { leadingJavadoc: javadocToAttach })
+    });
   }
   return tokens;
 }

@@ -56,8 +56,22 @@
         "command": "thymeleaf.createTemplate",
         "title": "Create Template",
         "category": "Thymeleaf"
+      },
+      {
+        "command": "thymeleaf.extractFragment",
+        "title": "Extract Fragment",
+        "category": "Thymeleaf"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "thymeleaf.extractFragment",
+          "when": "editorHasSelection && editorLangId == html",
+          "group": "refactor"
+        }
+      ]
+    },
     "configuration": {
       "title": "Thymeleaf",
       "properties": {

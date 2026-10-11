@@ -1918,6 +1918,126 @@ public class AdminController {
   }
 });
 
+test("displays Javadoc on hover for model properties in Thymeleaf templates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-javadoc-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const modelPath = path.join(java, "Customer.java");
+  const templatePath = path.join(templates, "customer.html");
+
+  const model = `package demo;
+class Customer {
+  /**
+   * The unique identifier of the customer.
+   */
+  private Long id;
+
+  /**
+   * Full customer legal name.
+   *
+   * @return the customer name
+   */
+  public String getName() {
+    return "John";
+  }
+}
+`;
+  const controller = `package demo;
+@Controller class CustomerController {
+  @GetMapping("/customer")
+  String view(Model model) {
+    model.addAttribute("customer", new Customer());
+    return "customer";
+  }
+}
+`;
+  const template = `<div>
+  <span th:text="\${customer.id}"></span>
+  <span th:text="\${customer.name}"></span>
+</div>`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(modelPath, model),
+      writeFile(path.join(java, "CustomerController.java"), controller),
+      writeFile(templatePath, template)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const document = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, template);
+
+    // 1. Hover on property 'id'
+    const idOffset = template.indexOf("customer.id") + "customer.".length;
+    const idHover = provideHover(document, document.positionAt(idOffset), index);
+    assert.ok(idHover, "Expected hover on customer.id");
+    assert.match(idHover.contents.value, /\*\*id\*\*: `Long`/);
+    assert.match(idHover.contents.value, /The unique identifier of the customer\./);
+
+    // 2. Hover on getter property 'name'
+    const nameOffset = template.indexOf("customer.name") + "customer.".length;
+    const nameHover = provideHover(document, document.positionAt(nameOffset), index);
+    assert.ok(nameHover, "Expected hover on customer.name");
+    assert.match(nameHover.contents.value, /\*\*name\*\*: `String`/);
+    assert.match(nameHover.contents.value, /Full customer legal name\./);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("offers Extract Fragment refactoring code action on HTML selection", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-extract-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "index.html");
+
+  const templateContent = `<!DOCTYPE html>
+<html>
+<body>
+  <header class="navbar">
+    <h1>Site Title</h1>
+  </header>
+</body>
+</html>`;
+
+  try {
+    await mkdir(templates, { recursive: true });
+    await writeFile(templatePath, templateContent);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const startOffset = templateContent.indexOf('<header class="navbar">');
+    const endOffset = templateContent.indexOf('</header>') + '</header>'.length;
+    const range = {
+      start: doc.positionAt(startOffset),
+      end: doc.positionAt(endOffset)
+    };
+
+    const actions = provideCodeActions(doc, range, [], index);
+    const extractAction = actions.find((a) => a.title === "Thymeleaf: Extract Fragment");
+    assert.ok(extractAction, "Expected 'Thymeleaf: Extract Fragment' code action");
+    assert.equal(extractAction.kind, "refactor.extract");
+
+    // WorkspaceEdit replaces the selection with th:replace and inserts th:fragment before </body>
+    const changes = extractAction.edit?.changes?.[doc.uri];
+    assert.ok(changes && changes.length === 2, "Expected two edits: replacement and fragment declaration");
+
+    const replaceEdit = changes.find((c) => c.newText.includes('th:replace="~{::extractedFragment}"'));
+    assert.ok(replaceEdit, "Expected replacement edit with th:replace");
+
+    const fragmentEdit = changes.find((c) => c.newText.includes('th:fragment="extractedFragment"'));
+    assert.ok(fragmentEdit, "Expected fragment declaration edit with th:fragment");
+    assert.match(fragmentEdit.newText, /<header class="navbar">/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

@@ -334,6 +334,36 @@ export function provideCodeActions(
     }
   }
 
+  if (document.languageId !== "java" && (range.start.line !== range.end.line || range.start.character !== range.end.character)) {
+    const selectedText = document.getText(range);
+    if (selectedText.trim().length > 0) {
+      const fragmentName = "extractedFragment";
+      const replaceText = `<div th:replace="~{::${fragmentName}}"></div>`;
+      const fullText = document.getText();
+      const bodyClose = fullText.lastIndexOf("</body>");
+      const insertPos = bodyClose >= 0 ? document.positionAt(bodyClose) : document.positionAt(fullText.length);
+      const fragmentDef = `\n<div th:fragment="${fragmentName}">\n${selectedText}\n</div>\n`;
+
+      actions.push({
+        title: "Thymeleaf: Extract Fragment",
+        kind: CodeActionKind.RefactorExtract,
+        edit: {
+          changes: {
+            [document.uri]: [
+              TextEdit.replace(range, replaceText),
+              TextEdit.insert(insertPos, fragmentDef)
+            ]
+          }
+        },
+        command: {
+          title: "Thymeleaf: Extract Fragment",
+          command: "thymeleaf.extractFragment",
+          arguments: [document.uri, range]
+        }
+      });
+    }
+  }
+
   return actions;
 }
 

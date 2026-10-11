@@ -61,7 +61,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       referencesProvider: true,
       hoverProvider: true,
       codeActionProvider: {
-        codeActionKinds: [CodeActionKind.QuickFix]
+        codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.RefactorExtract]
       },
       codeLensProvider: {
         resolveProvider: false

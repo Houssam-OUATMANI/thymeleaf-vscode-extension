@@ -141,10 +141,11 @@ export function provideHover(
 
   const method = findModelMethodAt(text, offset, template.name, index, document.uri);
   if (method) {
+    const docPart = method.javadoc ? `\n\n${method.javadoc}` : "\n\nJava method.";
     return {
       contents: {
         kind: "markdown",
-        value: `**${method.name}()**: \`${method.typeName}\`\n\nJava method.`
+        value: `**${method.name}()**: \`${method.typeName}\`${docPart}`
       },
       range: rangeAtOffset(text, ...findWordRange(text, offset))
     };
@@ -152,10 +153,11 @@ export function provideHover(
 
   const property = findModelPropertyAt(text, offset, template.name, index, document.uri);
   if (property) {
+    const docPart = property.javadoc ? `\n\n${property.javadoc}` : "\n\nJava model property.";
     return {
       contents: {
         kind: "markdown",
-        value: `**${property.name}**: \`${property.typeName}\`\n\nJava model property.`
+        value: `**${property.name}**: \`${property.typeName}\`${docPart}`
       },
       range: rangeAtOffset(text, ...findWordRange(text, offset))
     };
