@@ -343,11 +343,19 @@ function findSelectionPropertyContext(
 }
 
 function prioritizeThymeleaf(items: CompletionItem[]): CompletionItem[] {
-  return items.map((item, index) => ({
-    ...item,
-    sortText: item.sortText ?? `0000_${item.label}`,
-    ...(index === 0 ? { preselect: true } : {})
-  }));
+  return items
+    .map((item) => ({
+      ...item,
+      sortText: item.sortText ?? `0000_${item.label.toLowerCase()}`
+    }))
+    .sort((left, right) => {
+      const sortOrder = (left.sortText ?? "").localeCompare(right.sortText ?? "");
+      return sortOrder || left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    })
+    .map((item, index) => ({
+      ...item,
+      preselect: index === 0
+    }));
 }
 
 function findModelPropertyContext(

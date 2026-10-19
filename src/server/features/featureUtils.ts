@@ -585,14 +585,17 @@ export function modelAttributeDefinition(
   if (currentText) {
     for (const thymesVar of findThymesVars(currentText)) {
       if (thymesVar.id === modelName) {
-        const javaClass = index.findClass(thymesVar.typeName);
+        const javaClass = index.findClass(thymesVar.typeName) ??
+          index.findClass(getCollectionElementType(thymesVar.typeName));
         if (javaClass) return locationAt(javaClass.uri, javaClass.position);
       }
     }
   }
   for (const handler of index.getHandlersForTemplate(templateName, templateUri)) {
     const typeName = handler.modelAttributes.get(modelName);
-    const javaClass = typeName ? index.findClass(typeName) : undefined;
+    const javaClass = typeName
+      ? index.findClass(typeName) ?? index.findClass(getCollectionElementType(typeName))
+      : undefined;
     if (javaClass) return locationAt(javaClass.uri, javaClass.position);
   }
   return undefined;

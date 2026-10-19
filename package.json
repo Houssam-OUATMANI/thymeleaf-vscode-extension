@@ -2,7 +2,7 @@
   "name": "thymeleaf-companion",
   "displayName": "Thymeleaf Companion",
   "description": "The missing Thymeleaf extension for Spring Boot apps.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "extensionDependencies": [
     "redhat.java"
   ],
@@ -106,6 +106,13 @@
       {
         "scopeName": "source.thymeleaf.injection",
         "path": "./syntaxes/thymeleaf.injection.tmLanguage.json",
+        "injectTo": [
+          "text.html.basic"
+        ]
+      },
+      {
+        "scopeName": "source.thymeleaf.comments.injection",
+        "path": "./syntaxes/thymeleaf-comments.injection.tmLanguage.json",
         "injectTo": [
           "text.html.basic"
         ]

@@ -37,6 +37,9 @@ export function provideDefinition(
   const template = index.findTemplateByUri(document.uri);
 
   if (template) {
+    const thymesVarDefinition = findThymesVarTypeAt(text, offset, index);
+    if (thymesVarDefinition) return thymesVarDefinition;
+
     const fragmentReference = findFragmentReference(text, offset);
     if (fragmentReference) {
       const targetTemplate = fragmentReference.templateName
@@ -86,6 +89,40 @@ export function provideDefinition(
       ? index.findClass(typeName) ?? index.findClass(getCollectionElementType(typeName))
       : undefined;
     return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
+  }
+  return undefined;
+}
+
+function findThymesVarTypeAt(
+  text: string,
+  offset: number,
+  index: ProjectIndex
+): Location | undefined {
+  for (const thymesVar of findThymesVars(text)) {
+    const idStart = offsetAt(text, thymesVar.position);
+    if (offset >= idStart && offset <= idStart + thymesVar.id.length) {
+      const typeName = getCollectionElementType(thymesVar.typeName);
+      const javaClass = index.findClass(typeName) ?? index.findClass(thymesVar.typeName);
+      if (javaClass) return locationAt(javaClass.uri, javaClass.position);
+    }
+
+    const typeStart = offsetAt(text, thymesVar.typePosition);
+    const rawTypeEnd = typeStart + thymesVar.rawTypeName.length;
+    if (offset < typeStart || offset > rawTypeEnd) continue;
+
+    const relativeOffset = offset - typeStart;
+    const typeTokens = /[\w$]+(?:\.[\w$]+)*/g;
+    for (const match of thymesVar.rawTypeName.matchAll(typeTokens)) {
+      if (match.index === undefined) continue;
+      const tokenEnd = match.index + match[0].length;
+      if (relativeOffset < match.index || relativeOffset > tokenEnd) continue;
+      const javaClass = index.findClass(match[0]);
+      return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
+    }
+
+    const elementType = getCollectionElementType(thymesVar.typeName);
+    const javaClass = index.findClass(elementType);
+    if (javaClass) return locationAt(javaClass.uri, javaClass.position);
   }
   return undefined;
 }
@@ -453,16 +490,13 @@ function findModelMethodOccurrences(
   const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return [];
   const occurrences: { readonly property: JavaProperty; readonly range: Range }[] = [];
-  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
   let accessOffset = rootMatch.index + rootMatch[0].length;
 
   while (accessOffset < expression.body.length) {
-    accessPattern.lastIndex = accessOffset;
-    const access = accessPattern.exec(expression.body);
+    const access = readMemberAccess(expression.body, accessOffset);
     if (!access) break;
-    const name = access[1];
-    const nameOffset = accessOffset + access[0].indexOf(name);
-    if (access[2]) {
+    const { name, nameOffset } = access;
+    if (access.isMethodCall) {
       const receiver = resolveModelPath(
         expression.body.slice(0, nameOffset),
         expression.prefix,
@@ -483,7 +517,7 @@ function findModelMethodOccurrences(
         });
       }
     }
-    accessOffset += access[0].length;
+    accessOffset = access.endOffset;
   }
   return occurrences;
 }
@@ -523,16 +557,13 @@ function findModelPropertyOccurrences(
     }
   }
 
-  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
   let accessOffset = rootMatch.index + rootMatch[0].length;
   while (accessOffset < body.length) {
-    accessPattern.lastIndex = accessOffset;
-    const access = accessPattern.exec(body);
+    const access = readMemberAccess(body, accessOffset);
     if (!access) break;
-    const name = access[1];
-    const nameOffset = accessOffset + access[0].indexOf(name);
-    accessOffset += access[0].length;
-    if (access[2]) continue;
+    const { name, nameOffset, isMethodCall } = access;
+    accessOffset = access.endOffset;
+    if (isMethodCall) continue;
 
     const result = resolveModelPath(
       body.slice(0, nameOffset + name.length),
@@ -642,17 +673,14 @@ function findModelMethodAt(
   const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
 
-  const accessPattern = /\s*\.\s*([\w$]+)(\s*\([^()]*\))?/y;
   let accessOffset = rootMatch.index + rootMatch[0].length;
   while (accessOffset < expression.body.length) {
-    accessPattern.lastIndex = accessOffset;
-    const access = accessPattern.exec(expression.body);
+    const access = readMemberAccess(expression.body, accessOffset);
     if (!access) break;
-    const name = access[1];
-    const nameOffset = accessOffset + access[0].indexOf(name);
+    const { name, nameOffset } = access;
     const nameStart = expression.start + 2 + nameOffset;
     const nameEnd = nameStart + name.length;
-    if (access[2] && offset >= nameStart && offset <= nameEnd) {
+    if (access.isMethodCall && offset >= nameStart && offset <= nameEnd) {
       const receiver = resolveModelPath(
         expression.body.slice(0, nameOffset),
         expression.prefix,
@@ -666,9 +694,57 @@ function findModelMethodAt(
         ? index.findMethodDefinition(receiver.typeName, name)
         : undefined;
     }
-    accessOffset += access[0].length;
+    accessOffset = access.endOffset;
   }
   return undefined;
+}
+
+function readMemberAccess(
+  body: string,
+  offset: number
+): { readonly name: string; readonly nameOffset: number; readonly isMethodCall: boolean; readonly endOffset: number } | undefined {
+  let cursor = offset;
+  while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
+  if (body[cursor] !== ".") return undefined;
+  cursor += 1;
+  while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
+
+  const nameMatch = /^[\w$]+/.exec(body.slice(cursor));
+  const name = nameMatch?.[0];
+  if (!name) return undefined;
+  const nameOffset = cursor;
+  cursor += name.length;
+  while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
+  if (body[cursor] !== "(") {
+    return { name, nameOffset, isMethodCall: false, endOffset: cursor };
+  }
+
+  const endOffset = findClosingParenthesis(body, cursor);
+  return {
+    name,
+    nameOffset,
+    isMethodCall: true,
+    endOffset: endOffset < 0 ? body.length : endOffset + 1
+  };
+}
+
+function findClosingParenthesis(text: string, openOffset: number): number {
+  let depth = 0;
+  let quote: "'" | '"' | undefined;
+  for (let offset = openOffset; offset < text.length; offset += 1) {
+    const character = text[offset];
+    if (quote) {
+      if (character === quote && text[offset - 1] !== "\\") quote = undefined;
+    } else if (character === "'" || character === '"') {
+      quote = character;
+    } else if (character === "(") {
+      depth += 1;
+    } else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) return offset;
+    }
+  }
+  return -1;
 }
 
 function findModelDefinitionAt(

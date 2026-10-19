@@ -1036,6 +1036,42 @@ test("completes and navigates collection loop variables back to their Java model
   }
 });
 
+test("completes no-argument methods for a loop variable typed by @thymesVar", async () => {
+  const fixture = await createFixture();
+  const javaPath = path.join(fixture.root, "src", "main", "java", "demo", "Player.java");
+  const template = `<!-- @thymesVar id="pss" type="java.util.List<Player>" -->
+<ul th:each="player : \${pss}">
+  <li th:text="\${player.}"></li>
+</ul>`;
+
+  try {
+    await writeFile(javaPath, `package demo;
+public class Player {
+  private java.util.UUID id;
+  private Integer atk;
+  public int size() { return 1 + 1; }
+}`);
+    await fixture.index.refresh([pathToFileURL(fixture.root).toString()]);
+    fixture.index.updateOpenTemplate(fixture.templateUri, template);
+    const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+    const completionOffset = template.indexOf("player.") + "player.".length;
+    const completions = provideCompletions(
+      document,
+      document.positionAt(completionOffset),
+      fixture.index
+    );
+    const labels = completions.map(({ label }) => label);
+    assert.ok(labels.includes("size()"));
+    assert.equal(completions[0]?.label, [...labels].sort((left, right) => left.localeCompare(right))[0]);
+    assert.equal(completions[0]?.preselect, true);
+    assert.ok(completions.some(({ label, kind }) => label === "size()" && kind === 2));
+    assert.ok(completions.some(({ label, kind }) => label === "atk" && kind === 10));
+  } finally {
+    fixture.index.closeOpenTemplate(fixture.templateUri);
+    await fixture.dispose();
+  }
+});
+
 test("resolves th:each variables in earlier attributes on the same HTML element", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-loop-attribute-order-"));
   const templates = path.join(root, "src", "main", "resources", "templates");
@@ -1529,6 +1565,107 @@ test("supports @thymesVar directives for template typing without controllers", a
   }
 });
 
+test("supports generic collection types in @thymesVar directives", async () => {
+  const fixture = await createFixture();
+  const carPath = path.join(fixture.root, "src", "main", "java", "demo", "Car.java");
+  await writeFile(carPath, `package demo;
+class Car {
+  private String make;
+}`);
+  await fixture.index.refresh([pathToFileURL(fixture.root).toString()]);
+
+  try {
+    for (const genericType of ["java.util.List<demo.Car>", "java.util.List&lt;demo.Car&gt;"]) {
+      const template = `<!--/*@thymesVar id="cars" type="${genericType}"*/-->
+<span th:text="\${cars.size}"></span>
+<span th:each="car : \${cars}" th:text="\${car.make}"></span>`;
+      fixture.index.updateOpenTemplate(fixture.templateUri, template);
+      const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+
+      assert.equal(
+        fixture.index.modelAttributesForTemplate("users/list", fixture.templateUri).get("cars"),
+        "java.util.List<demo.Car>"
+      );
+      assert.deepEqual(
+        validateDocument(document, fixture.index, DEFAULT_SETTINGS)
+          .filter(({ code }) => code === "unknown-model-property"),
+        []
+      );
+    }
+  } finally {
+    fixture.index.closeOpenTemplate(fixture.templateUri);
+    await fixture.dispose();
+  }
+});
+
+test("colors and navigates variables and types in regular @thymesVar comments", async () => {
+  const fixture = await createFixture();
+  const dtoPath = path.join(fixture.root, "src", "main", "java", "demo", "StatusResponseDto.java");
+  const template = `<!-- @thymesVar id="status" type="java.util.List<StatusResponseDto>" -->
+<span th:text="\${status}"></span>`;
+
+  try {
+    await writeFile(dtoPath, `package demo;
+class StatusResponseDto {}`);
+    await fixture.index.refresh([pathToFileURL(fixture.root).toString()]);
+    fixture.index.updateOpenTemplate(fixture.templateUri, template);
+    const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+
+    const idOffset = template.indexOf("status");
+    const idDefinition = provideDefinition(
+      document,
+      document.positionAt(idOffset + 2),
+      fixture.index
+    );
+    assert.ok(idDefinition);
+    assert.equal(idDefinition.uri, pathToFileURL(dtoPath).toString());
+
+    const typeOffset = template.indexOf("StatusResponseDto") + 4;
+    const typeDefinition = provideDefinition(
+      document,
+      document.positionAt(typeOffset),
+      fixture.index
+    );
+    assert.ok(typeDefinition);
+    assert.equal(typeDefinition.uri, pathToFileURL(dtoPath).toString());
+
+    const usageOffset = template.lastIndexOf("status");
+    const usageDefinition = provideDefinition(
+      document,
+      document.positionAt(usageOffset + 2),
+      fixture.index
+    );
+    assert.ok(usageDefinition);
+    assert.equal(usageDefinition.uri, fixture.templateUri);
+    assert.deepEqual(
+      usageDefinition.range.start,
+      document.positionAt(idOffset)
+    );
+
+    const tokens = provideSemanticTokens(document, fixture.index);
+    const decoded: { text: string; type: string }[] = [];
+    let line = 0;
+    let character = 0;
+    for (let index = 0; index < tokens.data.length; index += 5) {
+      const deltaLine = tokens.data[index];
+      const deltaStart = tokens.data[index + 1];
+      line += deltaLine ?? 0;
+      character = deltaLine === 0 ? character + (deltaStart ?? 0) : deltaStart ?? 0;
+      const offset = document.offsetAt({ line, character });
+      const length = tokens.data[index + 2] ?? 0;
+      decoded.push({
+        text: template.slice(offset, offset + length),
+        type: SEMANTIC_TOKEN_TYPES[tokens.data[index + 3] ?? -1] ?? "unknown"
+      });
+    }
+    assert.ok(decoded.some(({ text, type }) => text === "status" && type === "variable"));
+    assert.ok(decoded.some(({ text, type }) => text === "StatusResponseDto" && type === "class"));
+  } finally {
+    fixture.index.closeOpenTemplate(fixture.templateUri);
+    await fixture.dispose();
+  }
+});
+
 test("supports i18n messages.properties resolution, completion, hover, and validation", async () => {
   const fixture = await createFixture();
   try {
@@ -1592,6 +1729,74 @@ test("supports inlined expressions [[...]] and [(...)] with validation and refer
     const diags = validateDocument(brokenInline, fixture.index, DEFAULT_SETTINGS);
     assert.ok(diags.some(({ code }) => code === "unknown-model-property"));
     assert.ok(diags.some(({ code }) => code === "unclosed-expression"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
+test("colors inline model members and navigates to inline Java methods", async () => {
+  const fixture = await createFixture();
+  const javaRoot = path.join(fixture.root, "src", "main", "java", "demo");
+  const pagePath = path.join(javaRoot, "Page.java");
+  const slicePath = path.join(javaRoot, "Slice.java");
+  const template = `<!--/*@thymesVar id="page" type="demo.Page"*/-->
+<p>[[\${page.title} \${page.hasNext()}]]</p>`;
+
+  try {
+    await writeFile(slicePath, `package demo;
+public interface Slice {
+ public boolean hasNext();
+}`);
+    await writeFile(pagePath, `package demo;
+public class Page implements Slice {
+  String title;
+ public boolean matches(String value) { return true; }
+ public String current() { return title; }
+}`);
+    await fixture.index.refresh([pathToFileURL(fixture.root).toString()]);
+
+    const document = TextDocument.create(fixture.templateUri, "html", 1, template);
+    const methodOffset = template.indexOf("hasNext");
+    const definition = provideDefinition(
+      document,
+      document.positionAt(methodOffset + 2),
+      fixture.index
+    );
+    assert.ok(definition);
+    assert.equal(definition.uri, pathToFileURL(slicePath).toString());
+    assert.ok(fixture.index.findMethodDefinition("demo.Page", "matches"));
+
+    const nestedTemplate = `<!--/*@thymesVar id="page" type="demo.Page"*/-->
+<p>[[\${page.matches(page.current())}]]</p>`;
+    const nestedDocument = TextDocument.create(fixture.templateUri, "html", 1, nestedTemplate);
+    const nestedMethodOffset = nestedTemplate.indexOf("matches");
+    const nestedDefinition = provideDefinition(
+      nestedDocument,
+      nestedDocument.positionAt(nestedMethodOffset + 2),
+      fixture.index
+    );
+    assert.ok(nestedDefinition);
+    assert.equal(nestedDefinition.uri, pathToFileURL(pagePath).toString());
+
+    const tokens = provideSemanticTokens(document, fixture.index);
+    const decoded: { text: string; type: string }[] = [];
+    let line = 0;
+    let character = 0;
+    for (let index = 0; index < tokens.data.length; index += 5) {
+      const deltaLine = tokens.data[index];
+      const deltaStart = tokens.data[index + 1];
+      line += deltaLine ?? 0;
+      character = deltaLine === 0 ? character + (deltaStart ?? 0) : deltaStart ?? 0;
+      const offset = document.offsetAt({ line, character });
+      const length = tokens.data[index + 2] ?? 0;
+      decoded.push({
+        text: template.slice(offset, offset + length),
+        type: SEMANTIC_TOKEN_TYPES[tokens.data[index + 3] ?? -1] ?? "unknown"
+      });
+    }
+
+    assert.ok(decoded.some(({ text, type }) => text === "title" && type === "property"));
+    assert.ok(decoded.some(({ text, type }) => text === "hasNext" && type === "method"));
   } finally {
     await fixture.dispose();
   }

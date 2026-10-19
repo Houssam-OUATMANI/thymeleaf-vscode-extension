@@ -70,6 +70,10 @@
           "match": "(?:==|!=|>=|<=|\\?:|\\?\\.|\\?|:|!|\\+|-|\\*|/|%|>|<|\\b(?:and|or|not|eq|ne|lt|gt|le|ge|div|mod|instanceof)\\b)"
         },
         {
+          "name": "entity.name.function.thymeleaf",
+          "match": "\\b[A-Za-z_$][\\w$]*(?=\\s*\\()"
+        },
+        {
           "name": "variable.other.thymeleaf",
           "match": "\\b[A-Za-z_$][\\w$]*\\b"
         }

@@ -69,13 +69,14 @@ Screenshots are hosted in the repository and are not included in the extension p
 ## Features
 
 - Prioritized completion for HTML and Thymeleaf attributes, model and selection expressions, `th:each` variables, templates, fragments, controller routes, and message keys.
-- Contextual completion for `th:*` attributes after whitespace, including precise replacement of partial prefixes, plus Java properties and no-argument methods inherited from indexed classes and interfaces.
-- Go to Definition for Java model properties and methods, controller routes, view names, templates, and fragments; Go to Type Definition for resolvable model variables and properties.
+- Contextual completion for `th:*` attributes after whitespace, including precise replacement of partial prefixes, plus Java properties and no-argument methods inherited from indexed classes and interfaces. Model completions use native VS Code item kinds and alphabetic ordering.
+- Go to Definition for Java model properties and methods in Thymeleaf attributes and inline expressions, controller routes, view names, templates, and fragments; Go to Type Definition for resolvable model variables and properties.
+- Syntax coloring and Go to Definition for Java variable and type names declared in `@thymesVar` HTML comments.
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
 - Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
 - Code lenses and gutter markers for navigating between Spring controller handlers, templates, and Thymeleaf fragments.
-- Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members.
+- Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members in attributes and inline expressions.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 - Support for both standard `th:*` attributes and their HTML5 `data-th-*` equivalents, including completion, navigation, diagnostics, and syntax highlighting.
 

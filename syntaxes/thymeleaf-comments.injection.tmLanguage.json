@@ -1,0 +1,75 @@
+{
+  "scopeName": "source.thymeleaf.comments.injection",
+  "injectionSelector": "L:comment.block.html",
+  "patterns": [
+    {
+      "name": "meta.annotation.thymesvar.html",
+      "begin": "@thymesVar\\b",
+      "end": "(?=-->|\\*/)",
+      "patterns": [
+        {
+          "name": "meta.variable.thymesvar.html",
+          "begin": "\\b(id)(\\s*=\\s*)([\"'])",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.other.attribute-name.thymeleaf.html"
+            },
+            "2": {
+              "name": "keyword.operator.assignment.thymeleaf.html"
+            },
+            "3": {
+              "name": "punctuation.definition.string.begin.thymeleaf.html"
+            }
+          },
+          "end": "([\"'])",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.thymeleaf.html"
+            }
+          },
+          "patterns": [
+            {
+              "name": "variable.other.thymeleaf",
+              "match": "[A-Za-z_$][\\w$]*"
+            }
+          ]
+        },
+        {
+          "name": "meta.type.thymesvar.html",
+          "begin": "\\b(type)(\\s*=\\s*)([\"'])",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.other.attribute-name.thymeleaf.html"
+            },
+            "2": {
+              "name": "keyword.operator.assignment.thymeleaf.html"
+            },
+            "3": {
+              "name": "punctuation.definition.string.begin.thymeleaf.html"
+            }
+          },
+          "end": "([\"'])",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.thymeleaf.html"
+            }
+          },
+          "patterns": [
+            {
+              "name": "entity.name.type.thymeleaf",
+              "match": "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+            },
+            {
+              "name": "keyword.operator.type-parameters.thymeleaf",
+              "match": "[&]lt;|[&]gt;|<|>|,|\\[|\\]"
+            },
+            {
+              "name": "constant.numeric.thymeleaf",
+              "match": "\\b\\d+\\b"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

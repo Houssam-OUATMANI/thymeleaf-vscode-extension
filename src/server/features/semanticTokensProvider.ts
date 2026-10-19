@@ -53,6 +53,24 @@ export function provideSemanticTokens(
   const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, document.uri));
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
+    const idOffset = document.offsetAt(thymesVar.position);
+    rawTokens.push({
+      offset: idOffset,
+      length: thymesVar.id.length,
+      typeIndex: TOKEN_TYPE_MAP["variable"],
+      modifierMask: 1 | 4
+    });
+
+    const typeOffset = document.offsetAt(thymesVar.typePosition);
+    for (const typeToken of thymesVar.rawTypeName.matchAll(/[\w$]+(?:\.[\w$]+)*/g)) {
+      if (typeToken.index === undefined || !index.findClass(typeToken[0])) continue;
+      rawTokens.push({
+        offset: typeOffset + typeToken.index,
+        length: typeToken[0].length,
+        typeIndex: TOKEN_TYPE_MAP["class"],
+        modifierMask: 0
+      });
+    }
   }
 
   // 1. Highlight loop variable declarations in th:each="p: ${ps}" or "s, iterStat : ${status}"

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.6.0] - 2026-10-19
+
+### Added
+
+- Add syntax highlighting and Java navigation for model variables and Java types declared in `@thymesVar` HTML comments.
+- Add syntax highlighting for Thymeleaf inline expressions and Java-backed properties and methods.
+- Support navigation to Java methods with nested arguments, including inherited methods.
+
+### Improved
+
+- Resolve generic `@thymesVar` collection types and expose their element properties and methods in completions.
+- Sort completion suggestions alphabetically and preselect the first suggestion, using native VS Code item kinds for variables, properties, and methods.
+
 ## [0.5.0] - 2026-10-09
 
 ### Added

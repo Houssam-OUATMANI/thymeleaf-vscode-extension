@@ -23,6 +23,8 @@ export interface IndexedThymesVar {
   readonly id: string;
   readonly typeName: string;
   readonly position: SourcePosition;
+  readonly typePosition: SourcePosition;
+  readonly rawTypeName: string;
 }
 
 export interface IndexedMessageProperty {
@@ -797,13 +799,28 @@ export function findThymesVars(content: string): IndexedThymesVar[] {
     const id = match[2] ?? match[8];
     const rawType = match[4] ?? match[6];
     if (!id || !rawType) continue;
-    const typeName = rawType.split(".").at(-1) ?? rawType;
-    const before = content.slice(0, match.index);
-    const lines = before.split("\n");
+    const idQuote = match[1] ?? match[7];
+    const typeQuote = match[3] ?? match[5];
+    if (!idQuote || !typeQuote) continue;
+    const idAttributeStart = match[0].indexOf(`id=${idQuote}${id}${idQuote}`);
+    const typeAttributeStart = match[0].indexOf(`type=${typeQuote}${rawType}${typeQuote}`);
+    if (idAttributeStart < 0 || typeAttributeStart < 0) continue;
+    const idOffset = match.index + idAttributeStart + `id=${idQuote}`.length;
+    const typeOffset = match.index + typeAttributeStart + `type=${typeQuote}`.length;
+    const typeName = rawType
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .trim();
+    const idBefore = content.slice(0, idOffset);
+    const idLines = idBefore.split("\n");
+    const typeBefore = content.slice(0, typeOffset);
+    const typeLines = typeBefore.split("\n");
     vars.push({
       id,
       typeName,
-      position: { line: lines.length - 1, character: lines.at(-1)?.length ?? 0 }
+      rawTypeName: rawType,
+      position: { line: idLines.length - 1, character: idLines.at(-1)?.length ?? 0 },
+      typePosition: { line: typeLines.length - 1, character: typeLines.at(-1)?.length ?? 0 }
     });
   }
   return vars;
