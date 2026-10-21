@@ -2615,6 +2615,103 @@ public class SecurityService {
   }
 });
 
+test("validates extended execution objects #arrays, #bools, #authentication, #strings without false positives", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-exec-objs-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "exec.html");
+
+  const templateContent = `<p th:if="\${#arrays.length({'a', 'b'}) > 0}">Array</p>
+<p th:if="\${#bools.isTrue(true)}">Bool</p>
+<p th:text="\${#authentication.getName()}">User</p>
+<p th:text="\${#strings.substringAfter('hello-world', '-')}">World</p>
+<p th:text="\${#arrays.invalidMethod()}">Broken</p>
+`;
+
+  try {
+    await mkdir(templates, { recursive: true });
+    await writeFile(templatePath, templateContent);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // Only #arrays.invalidMethod should be flagged
+    const unknownProps = diagnostics.filter((d) => d.code === "unknown-model-property");
+    assert.equal(unknownProps.length, 1);
+    assert.match(unknownProps[0].message, /invalidMethod/);
+
+    // Hover on #arrays shows its description
+    const arraysOffset = templateContent.indexOf("#arrays");
+    const hover = provideHover(doc, doc.positionAt(arraysOffset + 1), index);
+    assert.ok(hover, "Hover on #arrays should return doc");
+    assert.match(hover.contents.value, /array objects/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("supports Thymeleaf Layout Dialect layout:decorate and layout:fragment with navigation and references", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-layout-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const layoutPath = path.join(templates, "layouts", "base.html");
+  const pagePath = path.join(templates, "home.html");
+
+  const layoutContent = `<!DOCTYPE html>
+<html>
+<body>
+  <div layout:fragment="content">Base Content</div>
+</body>
+</html>`;
+
+  const pageContent = `<!DOCTYPE html>
+<html layout:decorate="layouts/base">
+<body>
+  <div layout:fragment="content">Home Custom Content</div>
+  <div layout:decorate="missing/layout"></div>
+</body>
+</html>`;
+
+  try {
+    await mkdir(path.join(templates, "layouts"), { recursive: true });
+    await Promise.all([
+      writeFile(layoutPath, layoutContent),
+      writeFile(pagePath, pageContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const pageDoc = TextDocument.create(pathToFileURL(pagePath).toString(), "html", 1, pageContent);
+    const diagnostics = validateDocument(pageDoc, index, DEFAULT_SETTINGS);
+
+    // Missing layout should be reported
+    const missingTemplates = diagnostics.filter((d) => d.code === "missing-template");
+    assert.equal(missingTemplates.length, 1);
+    assert.match(missingTemplates[0].message, /missing\/layout/);
+
+    // Navigation on layout:decorate="layouts/base" jumps to base.html
+    const layoutRefOffset = pageContent.indexOf("layouts/base");
+    const definition = provideDefinition(pageDoc, pageDoc.positionAt(layoutRefOffset + 2), index);
+    assert.ok(definition, "Should navigate to layouts/base.html");
+    assert.equal(definition.uri, pathToFileURL(layoutPath).toString());
+
+    // Fragment content is indexed on base.html
+    const baseTemplate = index.findTemplate("layouts/base");
+    assert.ok(baseTemplate, "base template should be indexed");
+    assert.ok(baseTemplate.fragments.some((f) => f.name === "content"), "Fragment 'content' should be indexed");
+
+    // References on 'content' in home.html finds definition in base.html
+    const fragOffset = pageContent.indexOf("content");
+    const refs = provideReferences(pageDoc, pageDoc.positionAt(fragOffset + 1), index);
+    assert.ok(refs.length >= 1, "Should find references for fragment 'content'");
+    assert.ok(refs.some((r) => r.uri === pathToFileURL(layoutPath).toString()), "References should include base.html");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

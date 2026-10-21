@@ -387,6 +387,17 @@ export function provideReferences(
     return findModelAttributeReferences(modelAttribute, index);
   }
 
+  const fragmentDef = findFragmentDefinitionAt(text, offset);
+  if (fragmentDef) {
+    return findFragmentReferences(template.name, fragmentDef, index);
+  }
+
+  const fragmentRef = findFragmentReference(text, offset);
+  if (fragmentRef?.fragmentName) {
+    const target = fragmentRef.templateName ?? template.name;
+    return findFragmentReferences(target, fragmentRef.fragmentName, index);
+  }
+
   const route = findRouteReference(text, offset);
   return route ? findRouteReferences(route.path, index) : [];
 }
@@ -860,7 +871,105 @@ function findFragmentReference(
       fragmentName: fragment?.split("(", 1)[0]?.trim()
     };
   }
+
+  for (const attribute of findThymeleafAttributes(text)) {
+    if (attribute.name !== "layout:decorate" && attribute.name !== "layout:decorator") continue;
+    if (offset >= attribute.valueStart && offset <= attribute.valueStart + attribute.value.length) {
+      const raw = attribute.value.trim().replace(/^['"]|['"]$/g, "");
+      const [templateName, fragment] = raw.split("::", 2).map((part) => part.trim());
+      return {
+        templateName: templateName ? normalizeTemplateName(templateName) : undefined,
+        fragmentName: fragment?.split("(", 1)[0]?.trim()
+      };
+    }
+  }
+
   return undefined;
+}
+
+function findFragmentDefinitionAt(text: string, offset: number): string | undefined {
+  for (const attribute of findThymeleafAttributes(text)) {
+    if (attribute.name !== "th:fragment" && attribute.name !== "layout:fragment") continue;
+    if (offset >= attribute.valueStart && offset <= attribute.valueStart + attribute.value.length) {
+      return attribute.value.trim().split("(", 1)[0]?.trim();
+    }
+  }
+  return undefined;
+}
+
+function findFragmentReferences(
+  templateName: string,
+  fragmentName: string,
+  index: ProjectIndex
+): Location[] {
+  const normalizedTarget = normalizeTemplateName(templateName);
+  const references: Location[] = [];
+
+  const targetTemplate = index.findTemplate(normalizedTarget);
+  const relatedTemplates: IndexedTemplate[] = [];
+  if (targetTemplate) {
+    relatedTemplates.push(targetTemplate);
+    for (const attr of findThymeleafAttributes(targetTemplate.content)) {
+      if (attr.name === "layout:decorate" || attr.name === "layout:decorator") {
+        const raw = attr.value.trim().replace(/^['"]|['"]$/g, "");
+        const [tpl] = raw.split("::", 2).map((p) => p.trim());
+        const parent = index.findTemplate(tpl);
+        if (parent && !relatedTemplates.includes(parent)) relatedTemplates.push(parent);
+      }
+    }
+  }
+
+  for (const candidate of index.templates) {
+    for (const attr of findThymeleafAttributes(candidate.content)) {
+      if (attr.name === "layout:decorate" || attr.name === "layout:decorator") {
+        const raw = attr.value.trim().replace(/^['"]|['"]$/g, "");
+        const [tpl] = raw.split("::", 2).map((p) => p.trim());
+        if (normalizeTemplateName(tpl) === normalizedTarget && !relatedTemplates.includes(candidate)) {
+          relatedTemplates.push(candidate);
+        }
+      }
+    }
+  }
+
+  for (const tpl of relatedTemplates) {
+    for (const attribute of findThymeleafAttributes(tpl.content)) {
+      if (attribute.name !== "th:fragment" && attribute.name !== "layout:fragment") continue;
+      const rawName = attribute.value.trim().split("(", 1)[0]?.trim();
+      if (rawName === fragmentName) {
+        const nameOffset = attribute.value.indexOf(fragmentName);
+        const start = attribute.valueStart + (nameOffset >= 0 ? nameOffset : 0);
+        references.push(Location.create(
+          tpl.uri,
+          rangeAtOffset(tpl.content, start, start + fragmentName.length)
+        ));
+      }
+    }
+  }
+
+  const targetNames = new Set(relatedTemplates.map((t) => normalizeTemplateName(t.name)));
+  targetNames.add(normalizedTarget);
+
+  for (const candidate of index.templates) {
+    for (const expression of findThymeleafExpressions(candidate.content)) {
+      if (expression.prefix !== "~") continue;
+      const [tplPart, fragPart] = expression.body.split("::", 2).map((p) => p.trim());
+      const normalizedTpl = tplPart ? normalizeTemplateName(tplPart) : normalizeTemplateName(candidate.name);
+      if (targetNames.has(normalizedTpl)) {
+        const callFrag = fragPart?.split("(", 1)[0]?.trim();
+        if (callFrag === fragmentName) {
+          const bodyStart = expression.start + 2;
+          const fragOffsetInBody = expression.body.indexOf(fragPart);
+          const start = bodyStart + (fragOffsetInBody >= 0 ? fragOffsetInBody : 0);
+          references.push(Location.create(
+            candidate.uri,
+            rangeAtOffset(candidate.content, start, start + fragmentName.length)
+          ));
+        }
+      }
+    }
+  }
+
+  return references;
 }
 
 function findRouteReference(

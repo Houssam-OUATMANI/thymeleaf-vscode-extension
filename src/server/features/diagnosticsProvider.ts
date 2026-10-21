@@ -90,7 +90,47 @@ export function validateDocument(
   const currentTemplateName = currentTemplate?.name ?? "";
 
   for (const attribute of findThymeleafAttributes(text)) {
-    if (!["th:insert", "th:replace", "th:include"].includes(attribute.name)) continue;
+    const isLayoutDecorate = attribute.name === "layout:decorate" || attribute.name === "layout:decorator";
+    if (!["th:insert", "th:replace", "th:include"].includes(attribute.name) && !isLayoutDecorate) continue;
+
+    if (isLayoutDecorate) {
+      const rawValue = attribute.value.trim().replace(/^['"]|['"]$/g, "");
+      const exprs = findThymeleafExpressions(attribute.value);
+      let targetTemplateName = rawValue;
+      let exprRange: Range;
+
+      if (exprs.length > 0 && exprs[0].prefix === "~") {
+        const [tpl] = exprs[0].body.split("::", 2).map((p) => p.trim());
+        targetTemplateName = tpl;
+        exprRange = rangeAtOffset(
+          text,
+          attribute.valueStart + exprs[0].start,
+          attribute.valueStart + exprs[0].end
+        );
+      } else {
+        const [tpl] = rawValue.split("::", 2).map((p) => p.trim());
+        targetTemplateName = tpl;
+        exprRange = rangeAtOffset(
+          text,
+          attribute.valueStart,
+          attribute.valueStart + attribute.value.length
+        );
+      }
+
+      if (targetTemplateName && !targetTemplateName.includes("${")) {
+        const target = index.findTemplate(targetTemplateName);
+        if (!target) {
+          diagnostics.push({
+            range: exprRange,
+            severity: DiagnosticSeverity.Error,
+            code: "missing-template",
+            source: "Thymeleaf",
+            message: `Layout template '${normalizeTemplateName(targetTemplateName)}' was not found in the configured template locations.`
+          });
+        }
+      }
+      continue;
+    }
     for (const expression of findThymeleafExpressions(attribute.value)) {
       if (expression.prefix !== "~") continue;
       const [templateName, fragmentName] = expression.body.split("::", 2).map((part) => part.trim());

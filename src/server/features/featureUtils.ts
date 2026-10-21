@@ -220,44 +220,155 @@ export const THYMELEAF_EXECUTION_OBJECTS: Record<
       { name: "sequence(from, to)", returnType: "List<Integer>", documentation: "Generate a sequence of integers from `from` to `to` inclusive." },
       { name: "sequence(from, to, step)", returnType: "List<Integer>", documentation: "Generate a sequence of integers with a given step." },
       { name: "formatInteger(target, minIntegerDigits)", returnType: "String", documentation: "Format integer with minimum integer digits." },
+      { name: "formatInteger(target, minIntegerDigits, thousandsPointType)", returnType: "String", documentation: "Format integer with point type." },
       { name: "formatDecimal(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format decimal number." },
-      { name: "formatPercent(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format percentage." }
+      { name: "formatDecimal(target, minIntegerDigits, decimalDigits, decimalPointType)", returnType: "String", documentation: "Format decimal number with point type." },
+      { name: "formatPercent(target, minIntegerDigits, decimalDigits)", returnType: "String", documentation: "Format percentage." },
+      { name: "formatCurrency(target)", returnType: "String", documentation: "Format number as currency." }
     ]
   },
   "#strings": {
     description: "Utility methods for String objects: empty checks, substring, contains, etc.",
     methods: [
+      { name: "toString(target)", returnType: "String", documentation: "Perform a null-safe toString() on target." },
       { name: "isEmpty(target)", returnType: "boolean", documentation: "Check whether a string is empty or null." },
       { name: "defaultString(target, defaultValue)", returnType: "String", documentation: "Return default string if target is null or empty." },
       { name: "contains(target, fragment)", returnType: "boolean", documentation: "Check whether a string contains a fragment." },
+      { name: "containsIgnoreCase(target, fragment)", returnType: "boolean", documentation: "Check whether a string contains a fragment ignoring case." },
       { name: "startsWith(target, prefix)", returnType: "boolean", documentation: "Check whether a string starts with a prefix." },
       { name: "endsWith(target, suffix)", returnType: "boolean", documentation: "Check whether a string ends with a suffix." },
+      { name: "indexOf(target, fragment)", returnType: "int", documentation: "Find index of fragment in target string." },
+      { name: "substring(target, start, end)", returnType: "String", documentation: "Extract substring from target." },
+      { name: "substringAfter(target, fragment)", returnType: "String", documentation: "Extract substring appearing after fragment." },
+      { name: "substringBefore(target, fragment)", returnType: "String", documentation: "Extract substring appearing before fragment." },
+      { name: "prepend(target, prefix)", returnType: "String", documentation: "Prepend prefix to target." },
+      { name: "append(target, suffix)", returnType: "String", documentation: "Append suffix to target." },
+      { name: "concat(...targets)", returnType: "String", documentation: "Concatenate multiple targets." },
       { name: "length(target)", returnType: "int", documentation: "Return the length of a string." },
       { name: "toUpperCase(target)", returnType: "String", documentation: "Convert string to upper case." },
       { name: "toLowerCase(target)", returnType: "String", documentation: "Convert string to lower case." },
       { name: "capitalize(target)", returnType: "String", documentation: "Capitalize first character." },
+      { name: "unCapitalize(target)", returnType: "String", documentation: "Uncapitalize first character." },
+      { name: "capitalizeWords(target)", returnType: "String", documentation: "Capitalize all words in string." },
       { name: "trim(target)", returnType: "String", documentation: "Trim whitespace." },
-      { name: "replace(target, before, after)", returnType: "String", documentation: "Replace occurrences of substring." }
+      { name: "replace(target, before, after)", returnType: "String", documentation: "Replace occurrences of substring." },
+      { name: "abbreviate(target, maxLength)", returnType: "String", documentation: "Abbreviate string to maximum length with ellipsis." },
+      { name: "equals(target, other)", returnType: "boolean", documentation: "Check string equality." },
+      { name: "equalsIgnoreCase(target, other)", returnType: "boolean", documentation: "Check string equality ignoring case." },
+      { name: "arrayJoin(target, sep)", returnType: "String", documentation: "Join array elements with separator." },
+      { name: "listJoin(target, sep)", returnType: "String", documentation: "Join list elements with separator." },
+      { name: "setJoin(target, sep)", returnType: "String", documentation: "Join set elements with separator." },
+      { name: "arraySplit(target, sep)", returnType: "String[]", documentation: "Split string into array by separator." },
+      { name: "listSplit(target, sep)", returnType: "List<String>", documentation: "Split string into list by separator." },
+      { name: "setSplit(target, sep)", returnType: "Set<String>", documentation: "Split string into set by separator." },
+      { name: "escapeXml(target)", returnType: "String", documentation: "XML-escape a string." },
+      { name: "escapeJava(target)", returnType: "String", documentation: "Java-escape a string." },
+      { name: "escapeJavaScript(target)", returnType: "String", documentation: "JavaScript-escape a string." }
+    ]
+  },
+  "#arrays": {
+    description: "Utility methods for array objects.",
+    methods: [
+      { name: "toArray(target)", returnType: "Object[]", documentation: "Convert target collection or iterable to array." },
+      { name: "toStringArray(target)", returnType: "String[]", documentation: "Convert target to String array." },
+      { name: "toIntegerArray(target)", returnType: "Integer[]", documentation: "Convert target to Integer array." },
+      { name: "length(target)", returnType: "int", documentation: "Get length of array." },
+      { name: "isEmpty(target)", returnType: "boolean", documentation: "Check if array is empty." },
+      { name: "contains(target, element)", returnType: "boolean", documentation: "Check if array contains element." },
+      { name: "containsAll(target, elements)", returnType: "boolean", documentation: "Check if array contains all elements." }
+    ]
+  },
+  "#objects": {
+    description: "General object utilities.",
+    methods: [
+      { name: "nullSafe(target, defaultValue)", returnType: "Object", documentation: "Return default value if target is null." }
+    ]
+  },
+  "#bools": {
+    description: "Utility methods for boolean evaluation.",
+    methods: [
+      { name: "isTrue(target)", returnType: "boolean", documentation: "Evaluate if target is true." },
+      { name: "isFalse(target)", returnType: "boolean", documentation: "Evaluate if target is false." },
+      { name: "arrayIsTrue(target)", returnType: "boolean[]", documentation: "Evaluate array elements to booleans." },
+      { name: "listIsTrue(target)", returnType: "List<Boolean>", documentation: "Evaluate list elements to booleans." },
+      { name: "setIsTrue(target)", returnType: "Set<Boolean>", documentation: "Evaluate set elements to booleans." },
+      { name: "arrayIsFalse(target)", returnType: "boolean[]", documentation: "Evaluate array elements to inverted booleans." },
+      { name: "listIsFalse(target)", returnType: "List<Boolean>", documentation: "Evaluate list elements to inverted booleans." },
+      { name: "setIsFalse(target)", returnType: "Set<Boolean>", documentation: "Evaluate set elements to inverted booleans." }
+    ]
+  },
+  "#vars": {
+    description: "Current expression evaluation variables.",
+    methods: [
+      { name: "get(name)", returnType: "Object", documentation: "Get variable from context." }
+    ]
+  },
+  "#root": {
+    description: "Root context object.",
+    methods: [
+      { name: "getVariable(name)", returnType: "Object", documentation: "Get root variable." }
+    ]
+  },
+  "#authentication": {
+    description: "Spring Security Authentication object.",
+    methods: [
+      { name: "getName()", returnType: "String", documentation: "Name of the authenticated principal." },
+      { name: "getPrincipal()", returnType: "Object", documentation: "Authenticated principal object." },
+      { name: "getAuthorities()", returnType: "Collection", documentation: "Granted authorities." },
+      { name: "isAuthenticated()", returnType: "boolean", documentation: "Check if request is authenticated." },
+      { name: "getDetails()", returnType: "Object", documentation: "Authentication details." }
+    ]
+  },
+  "#authorization": {
+    description: "Spring Security authorization evaluation utility.",
+    methods: [
+      { name: "expression(spel)", returnType: "boolean", documentation: "Evaluate Spring Security SpEL authorization expression." }
     ]
   },
   "#dates": {
     description: "Utility methods for java.util.Date objects.",
     methods: [
+      { name: "format(target)", returnType: "String", documentation: "Format Date with default format." },
       { name: "format(target, pattern)", returnType: "String", documentation: "Format Date with pattern." },
+      { name: "format(target, pattern, locale)", returnType: "String", documentation: "Format Date with pattern and locale." },
       { name: "day(target)", returnType: "int", documentation: "Get day of month." },
       { name: "month(target)", returnType: "int", documentation: "Get month." },
+      { name: "monthName(target)", returnType: "String", documentation: "Get full month name." },
+      { name: "monthNameShort(target)", returnType: "String", documentation: "Get short month name." },
       { name: "year(target)", returnType: "int", documentation: "Get year." },
-      { name: "createNow()", returnType: "Date", documentation: "Get current Date." }
+      { name: "dayOfWeek(target)", returnType: "int", documentation: "Get day of week." },
+      { name: "dayOfWeekName(target)", returnType: "String", documentation: "Get full day of week name." },
+      { name: "dayOfWeekNameShort(target)", returnType: "String", documentation: "Get short day of week name." },
+      { name: "hour(target)", returnType: "int", documentation: "Get hour." },
+      { name: "minute(target)", returnType: "int", documentation: "Get minute." },
+      { name: "second(target)", returnType: "int", documentation: "Get second." },
+      { name: "millisecond(target)", returnType: "int", documentation: "Get millisecond." },
+      { name: "create(year, month, day)", returnType: "Date", documentation: "Create Date instance." },
+      { name: "createNow()", returnType: "Date", documentation: "Get current Date." },
+      { name: "createToday()", returnType: "Date", documentation: "Get Date representing start of today." }
     ]
   },
   "#temporals": {
-    description: "Utility methods for Java 8 java.time (LocalDate, LocalDateTime) objects.",
+    description: "Utility methods for Java 8 java.time (LocalDate, LocalDateTime, etc.) objects.",
     methods: [
+      { name: "format(target)", returnType: "String", documentation: "Format Temporal with default pattern." },
       { name: "format(target, pattern)", returnType: "String", documentation: "Format Temporal with pattern." },
+      { name: "format(target, pattern, locale)", returnType: "String", documentation: "Format Temporal with pattern and locale." },
       { name: "day(target)", returnType: "int", documentation: "Get day." },
       { name: "month(target)", returnType: "int", documentation: "Get month." },
+      { name: "monthName(target)", returnType: "String", documentation: "Get full month name." },
+      { name: "monthNameShort(target)", returnType: "String", documentation: "Get short month name." },
       { name: "year(target)", returnType: "int", documentation: "Get year." },
-      { name: "createNow()", returnType: "LocalDateTime", documentation: "Get current LocalDateTime." }
+      { name: "dayOfWeek(target)", returnType: "int", documentation: "Get day of week." },
+      { name: "dayOfWeekName(target)", returnType: "String", documentation: "Get full day of week name." },
+      { name: "dayOfWeekNameShort(target)", returnType: "String", documentation: "Get short day of week name." },
+      { name: "hour(target)", returnType: "int", documentation: "Get hour." },
+      { name: "minute(target)", returnType: "int", documentation: "Get minute." },
+      { name: "second(target)", returnType: "int", documentation: "Get second." },
+      { name: "nanosecond(target)", returnType: "int", documentation: "Get nanosecond." },
+      { name: "create(year, month, day)", returnType: "LocalDate", documentation: "Create LocalDate instance." },
+      { name: "createNow()", returnType: "LocalDateTime", documentation: "Get current LocalDateTime." },
+      { name: "createToday()", returnType: "LocalDate", documentation: "Get LocalDate representing today." }
     ]
   },
   "#lists": {

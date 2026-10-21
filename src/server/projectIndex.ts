@@ -837,7 +837,7 @@ function superTypesForClass(javaClass: JavaClass): readonly string[] {
 function findFragments(content: string): IndexedFragment[] {
   const fragments: IndexedFragment[] = [];
   for (const attribute of findThymeleafAttributes(content)) {
-    if (attribute.name !== "th:fragment") continue;
+    if (attribute.name !== "th:fragment" && attribute.name !== "layout:fragment") continue;
     const rawName = attribute.value.trim();
     const name = rawName?.split("(", 1)[0]?.trim();
     if (!name) continue;
