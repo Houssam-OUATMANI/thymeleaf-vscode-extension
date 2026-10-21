@@ -56,7 +56,10 @@ export function provideDefinition(
     const route = findRouteReference(text, offset);
     if (route) {
       const handler = index.findHandlersForRoute(route.path)[0];
-      return handler ? locationAt(handler.uri, handler.position) : undefined;
+      if (handler) return locationAt(handler.uri, handler.position);
+      const staticFile = index.findStaticFile(route.path);
+      if (staticFile) return locationAt(staticFile.uri, Position.create(0, 0));
+      return undefined;
     }
 
     const modelDefinition = findModelDefinitionAt(text, offset, template.name, index, document.uri);
@@ -233,14 +236,26 @@ export function provideHover(
   const route = findRouteReference(text, offset);
   if (!route) return undefined;
   const handlers = index.findHandlersForRoute(route.path);
-  if (handlers.length === 0) return undefined;
-  return {
-    contents: {
-      kind: "markdown",
-      value: `Spring route \`${route.path}\`\n\n${handlers.map(({ name }) => `- \`${name}()\``).join("\n")}`
-    },
-    range: rangeAt(document, route.range)
-  };
+  if (handlers.length > 0) {
+    return {
+      contents: {
+        kind: "markdown",
+        value: `Spring route \`${route.path}\`\n\n${handlers.map(({ name }) => `- \`${name}()\``).join("\n")}`
+      },
+      range: rangeAt(document, route.range)
+    };
+  }
+  const staticFile = index.findStaticFile(route.path);
+  if (staticFile) {
+    return {
+      contents: {
+        kind: "markdown",
+        value: `Static asset: \`${staticFile.path}\``
+      },
+      range: rangeAt(document, route.range)
+    };
+  }
+  return undefined;
 }
 
 export function provideReferences(
@@ -705,8 +720,20 @@ function readMemberAccess(
 ): { readonly name: string; readonly nameOffset: number; readonly isMethodCall: boolean; readonly endOffset: number } | undefined {
   let cursor = offset;
   while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
-  if (body[cursor] !== ".") return undefined;
-  cursor += 1;
+  while (cursor < body.length && body[cursor] === "[") {
+    const closeBracket = body.indexOf("]", cursor);
+    if (closeBracket < 0) return undefined;
+    cursor = closeBracket + 1;
+    while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
+  }
+
+  if (body[cursor] === "?" && body[cursor + 1] === ".") {
+    cursor += 2;
+  } else if (body[cursor] === ".") {
+    cursor += 1;
+  } else {
+    return undefined;
+  }
   while (cursor < body.length && /\s/.test(body[cursor] ?? "")) cursor += 1;
 
   const nameMatch = /^[\w$]+/.exec(body.slice(cursor));

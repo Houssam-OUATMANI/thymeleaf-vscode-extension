@@ -1014,6 +1014,17 @@ export function inferModelExpressionType(
   const directType = handler.modelAttributes.get(expression);
   if (directType) return directType;
 
+  const castMatch = /^\(\s*([\w$]+(?:<[\s\S]+>)?)\s*\)/.exec(expression);
+  if (castMatch) {
+    const rawType = castMatch[1];
+    const genericStart = rawType.indexOf("<");
+    const className = genericStart < 0 ? rawType : rawType.slice(0, genericStart);
+    const qualifiedName = classesByName.get(className)?.qualifiedName ?? className;
+    return genericStart < 0
+      ? qualifiedName
+      : `${qualifiedName}${rawType.slice(genericStart)}`;
+  }
+
   const constructorMatch = /^new\s*([\w$]+(?:<[^>]+>)?)/.exec(expression);
   if (constructorMatch) {
     const rawType = constructorMatch[1];

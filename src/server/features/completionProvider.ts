@@ -82,7 +82,7 @@ export function provideCompletions(
 
   const routeContext = findRouteContext(linePrefix);
   if (routeContext !== undefined) {
-    return prioritizeThymeleaf(index.controllerHandlers
+    const routeItems = index.controllerHandlers
       .flatMap(({ routePaths }) => routePaths)
       .filter((route) => route.startsWith(routeContext))
       .filter((route, routeIndex, routes) => routes.indexOf(route) === routeIndex)
@@ -91,7 +91,16 @@ export function provideCompletions(
         kind: CompletionItemKind.Reference,
         detail: "Spring controller route",
         insertText: route
-      })));
+      }));
+    const staticItems = index.staticFilePaths
+      .filter((route) => route.startsWith(routeContext))
+      .map((route) => ({
+        label: route,
+        kind: CompletionItemKind.File,
+        detail: "Static asset",
+        insertText: route
+      }));
+    return prioritizeThymeleaf([...routeItems, ...staticItems]);
   }
 
   const execMatch = /(#[a-zA-Z]+)\.([a-zA-Z]*)$/.exec(linePrefix);

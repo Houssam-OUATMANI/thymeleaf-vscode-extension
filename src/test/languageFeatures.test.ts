@@ -2243,6 +2243,191 @@ test("offers Extract Fragment refactoring code action on HTML selection", async 
   }
 });
 
+test("indexes static assets and prevents false positive missing-route warnings on links", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-static-assets-"));
+  const staticDir = path.join(root, "src", "main", "resources", "static", "css");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const cssFile = path.join(staticDir, "style.css");
+  const templatePath = path.join(templates, "index.html");
+
+  const templateContent = `<!DOCTYPE html>
+<html>
+<body>
+  <a th:href="@{/css/style.css}">CSS Link</a>
+  <a th:href="@{'/user/' + \${userId}}">Dynamic Link</a>
+  <a th:href="@{/nonexistent/missing}">Missing Route Link</a>
+</body>
+</html>`;
+
+  try {
+    await Promise.all([
+      mkdir(staticDir, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(cssFile, "body { color: red; }"),
+      writeFile(templatePath, templateContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    assert.ok(index.findStaticFile("/css/style.css"), "Static file should be indexed");
+    assert.equal(index.findStaticFile("css/style.css")?.path, "/css/style.css");
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // /css/style.css exists -> no diagnostic
+    // '/user/' + ${userId} is dynamic -> no diagnostic
+    // /nonexistent/missing -> reported as missing-route
+    const missingRoutes = diagnostics.filter((d) => d.code === "missing-route");
+    assert.equal(missingRoutes.length, 1);
+    assert.match(missingRoutes[0].message, /missing/);
+
+    // Definition jumps to static file
+    const linkOffset = templateContent.indexOf("/css/style.css");
+    const definition = provideDefinition(doc, doc.positionAt(linkOffset + 2), index);
+    assert.ok(definition);
+    assert.equal(definition.uri, pathToFileURL(cssFile).toString());
+
+    // Hover indicates static asset
+    const hover = provideHover(doc, doc.positionAt(linkOffset + 2), index);
+    assert.ok(hover);
+    assert.match(hover.contents.value, /Static asset/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("supports safe-navigation ?. and indexed bracket access in SpEL expressions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-spel-operators-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const userFile = path.join(java, "User.java");
+  const controllerFile = path.join(java, "UserController.java");
+  const templatePath = path.join(templates, "users.html");
+
+  const userJava = `package demo;
+public class User {
+  public Address address;
+  public String name;
+}
+class Address {
+  public String city;
+}
+`;
+  const controllerJava = `package demo;
+import java.util.List;
+@Controller
+public class UserController {
+  @GetMapping("/users")
+  public String getUsers(Model model) {
+    model.addAttribute("users", List.of(new User()));
+    model.addAttribute("user", new User());
+    return "users";
+  }
+}
+`;
+  const templateContent = `<div th:text="\${user?.address?.city}"></div>
+<div th:text="\${users[0].name}"></div>
+<div th:text="\${users[0]?.address?.city}"></div>
+<div th:text="\${user?.invalidProperty}"></div>
+`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(userFile, userJava),
+      writeFile(controllerFile, controllerJava),
+      writeFile(templatePath, templateContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // Only user?.invalidProperty should be reported
+    const unknownProps = diagnostics.filter((d) => d.code === "unknown-model-property");
+    assert.equal(unknownProps.length, 1);
+    assert.match(unknownProps[0].message, /invalidProperty/);
+
+    // Navigation on city in user?.address?.city
+    const cityOffset = templateContent.indexOf("city");
+    const definition = provideDefinition(doc, doc.positionAt(cityOffset + 1), index);
+    assert.ok(definition, "Should navigate to Address.city through safe navigation");
+    assert.equal(definition.uri, pathToFileURL(userFile).toString());
+
+    // Navigation on name in users[0].name
+    const nameOffset = templateContent.indexOf("name");
+    const nameDef = provideDefinition(doc, doc.positionAt(nameOffset + 1), index);
+    assert.ok(nameDef, "Should navigate to User.name through bracket indexing");
+    assert.equal(nameDef.uri, pathToFileURL(userFile).toString());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("supports Map dynamic keys and Object types without unknown-model-property errors", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-maps-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const controllerFile = path.join(java, "MapController.java");
+  const templatePath = path.join(templates, "map.html");
+
+  const controllerJava = `package demo;
+import java.util.Map;
+public class Article {
+  public String title;
+}
+@Controller
+public class MapController {
+  @GetMapping("/map")
+  public String getMap(Model model) {
+    model.addAttribute("articles", (Map<String, Article>) null);
+    model.addAttribute("genericMap", (Map) null);
+    model.addAttribute("rawObj", new Object());
+    return "map";
+  }
+}
+`;
+  const templateContent = `<div th:text="\${articles.firstArticle.title}"></div>
+<div th:text="\${articles['secondArticle'].title}"></div>
+<div th:text="\${genericMap.arbitraryKey}"></div>
+<div th:text="\${rawObj.anyProperty}"></div>
+<div th:text="\${articles.firstArticle.unknownProperty}"></div>
+`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(controllerFile, controllerJava),
+      writeFile(templatePath, templateContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // Only unknownProperty on Article should be reported
+    const unknownProps = diagnostics.filter((d) => d.code === "unknown-model-property");
+    assert.equal(unknownProps.length, 1);
+    assert.match(unknownProps[0].message, /unknownProperty/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

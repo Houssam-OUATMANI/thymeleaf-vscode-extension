@@ -130,8 +130,12 @@ export function validateDocument(
       const routeValue = routePath(expression.body);
       if (
         !routeValue ||
+        routeValue.includes("${") ||
+        routeValue.includes("+") ||
+        routeValue.includes("'") ||
         (attribute.name === "th:href" && !isNavigationalHref(text, attribute.valueStart)) ||
-        index.findHandlersForRoute(routeValue).length > 0
+        index.findHandlersForRoute(routeValue).length > 0 ||
+        index.findStaticFile(routeValue) !== undefined
       ) continue;
       diagnostics.push({
         range: rangeAtOffset(text, attribute.valueStart + expression.start, attribute.valueStart + expression.end),
@@ -449,7 +453,7 @@ function validateModelProperties(
 }
 
 function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
-  if (/^[#\w$]+(?:\.[#\w$]+(?:\([^()]*\))?)*$/.test(body.trim())) {
+  if (/^[#\w$]+(?:(?:\.|\?\.)[#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(body.trim())) {
     const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
     return [{ subPath: body.trim(), offset: leadingSpaces }];
   }
@@ -460,11 +464,11 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
     "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof"
   ]);
 
-  const pathRegex = /(?:#|[a-zA-Z_$])[\w$]*(?:\s*\.\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?)+/g;
+  const pathRegex = /(?:#|[a-zA-Z_$])[\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])+/g;
   for (const match of body.matchAll(pathRegex)) {
     if (match.index === undefined) continue;
     const pathStr = match[0];
-    const root = pathStr.split(".")[0]?.trim();
+    const root = pathStr.split(/[.?[\]]/)[0]?.trim();
     if (root && !keywords.has(root)) {
       results.push({ subPath: pathStr, offset: match.index });
     }

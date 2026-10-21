@@ -43,10 +43,37 @@ export function findSelectedObjectType(
   return currentType;
 }
 
+export function isMapType(typeName: string): boolean {
+  const raw = typeName.replace(/<.*>$/, "").trim();
+  const simple = raw.split(".").at(-1) ?? raw;
+  return /^(?:Map|HashMap|LinkedHashMap|TreeMap|ConcurrentMap|ConcurrentHashMap)$/.test(simple);
+}
+
+export function getMapValueType(typeName: string): string | undefined {
+  const match = /<([\s\S]+)>$/.exec(typeName.trim());
+  if (!match) return undefined;
+  const genericInner = match[1];
+  let depth = 0;
+  for (let i = 0; i < genericInner.length; i += 1) {
+    const char = genericInner[i];
+    if (char === "<") depth += 1;
+    else if (char === ">") depth -= 1;
+    else if (char === "," && depth === 0) {
+      return genericInner.slice(i + 1).trim();
+    }
+  }
+  return undefined;
+}
+
 export function getCollectionElementType(typeName: string): string {
-  const match = /^(?:[\w$.]+<([\w$.]+)>|([\w$.]+)\[\])$/.exec(typeName.trim());
-  if (match) {
-    return match[1] ?? match[2];
+  const trimmed = typeName.trim();
+  if (trimmed.endsWith("[]")) {
+    return trimmed.slice(0, -2).trim();
+  }
+  const openAngle = trimmed.indexOf("<");
+  const closeAngle = trimmed.lastIndexOf(">");
+  if (openAngle > 0 && closeAngle === trimmed.length - 1) {
+    return trimmed.slice(openAngle + 1, closeAngle).trim();
   }
   return typeName;
 }
@@ -417,7 +444,25 @@ export function resolveModelPath(
   let accessOffset = chainOffset;
   while (accessOffset < body.length) {
     const remaining = body.slice(accessOffset);
-    const dotMatch = /^\s*\.\s*([\w$]+)/.exec(remaining);
+
+    // 1. Bracket access: [0], ['key'], ["key"], [var]
+    const bracketMatch = /^\s*\[\s*([^\]]+?)\s*\]/.exec(remaining);
+    if (bracketMatch) {
+      accessOffset += bracketMatch[0].length;
+      consumedLength = accessOffset;
+      if (isMapType(currentTypeName)) {
+        currentTypeName = getMapValueType(currentTypeName) || "java.lang.Object";
+      } else if (currentTypeName === "Object" || currentTypeName === "java.lang.Object" || currentTypeName.includes("JsonNode")) {
+        currentTypeName = "java.lang.Object";
+      } else {
+        currentTypeName = getCollectionElementType(currentTypeName);
+      }
+      lastProperty = undefined;
+      continue;
+    }
+
+    // 2. Dot access or Safe-navigation: .prop or ?.prop
+    const dotMatch = /^\s*(?:\.|\?\.)\s*([\w$]+)/.exec(remaining);
     if (!dotMatch) break;
 
     const name = dotMatch[1];
@@ -463,6 +508,11 @@ export function resolveModelPath(
         lastProperty = undefined;
         continue;
       }
+      if (isMapType(currentTypeName) || currentTypeName === "Object" || currentTypeName === "java.lang.Object" || currentTypeName.includes("JsonNode")) {
+        currentTypeName = "java.lang.Object";
+        lastProperty = undefined;
+        continue;
+      }
     }
 
     if (currentTypeName.startsWith("#")) {
@@ -485,6 +535,16 @@ export function resolveModelPath(
 
     const property = index.findProperty(currentTypeName, name);
     if (!property) {
+      if (isMapType(currentTypeName)) {
+        currentTypeName = getMapValueType(currentTypeName) || "java.lang.Object";
+        lastProperty = undefined;
+        continue;
+      }
+      if (currentTypeName === "Object" || currentTypeName === "java.lang.Object" || currentTypeName.includes("JsonNode")) {
+        currentTypeName = "java.lang.Object";
+        lastProperty = undefined;
+        continue;
+      }
       return {
         typeName: currentTypeName,
         property: undefined,

@@ -68,6 +68,12 @@ const EXCLUDED_DIRECTORIES = new Set([
   "bin", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"
 ]);
 const DEFAULT_TEMPLATE_LOCATIONS = ["src/main/resources/templates"];
+const DEFAULT_STATIC_LOCATIONS = [
+  "src/main/resources/static",
+  "src/main/resources/public",
+  "src/main/resources/resources",
+  "src/main/resources/META-INF/resources"
+];
 
 export class ProjectIndex {
   private templateByName = new Map<string, IndexedTemplate>();
@@ -83,6 +89,7 @@ export class ProjectIndex {
   private typeReferences: readonly JavaTypeReference[] = [];
   private compilerTypes = new Map<string, JavaClass>();
   private ambiguousCompilerAliases = new Set<string>();
+  private staticFiles = new Map<string, { uri: string; path: string }>();
 
   public get templates(): readonly IndexedTemplate[] {
     return [...this.templateByUri.values()].map((template) =>
@@ -209,6 +216,7 @@ export class ProjectIndex {
     const javaSourcesByWorkspace: Map<string, string>[] = [];
     const messagesByKey = new Map<string, IndexedMessageProperty[]>();
     const normalizedOpenDocuments = new Map<string, string>();
+    const staticFiles = new Map<string, { uri: string; path: string }>();
     for (const [uri, content] of openDocuments) {
       const key = fileUriKey(uri);
       if (key) normalizedOpenDocuments.set(key, content);
@@ -260,6 +268,17 @@ export class ProjectIndex {
           if (uriKey) templateByUri.set(uriKey, template);
         }
       }
+
+      for (const staticLocation of DEFAULT_STATIC_LOCATIONS) {
+        const staticRoot = path.resolve(workspacePath, staticLocation);
+        if (!isWithin(workspacePath, staticRoot)) continue;
+        for (const filePath of await findFiles(staticRoot, "")) {
+          const rel = toPosix(path.relative(staticRoot, filePath));
+          const route = rel.startsWith("/") ? rel : `/${rel}`;
+          staticFiles.set(route, { uri: pathToFileURL(filePath).toString(), path: route });
+          staticFiles.set(route.toLowerCase(), { uri: pathToFileURL(filePath).toString(), path: route });
+        }
+      }
     }
 
     const javaIndexes = javaSourcesByWorkspace.map((javaSources) => indexJavaSources(javaSources));
@@ -292,6 +311,17 @@ export class ProjectIndex {
     this.typeReferences = javaIndexes.flatMap(({ typeReferences }) => typeReferences);
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
+    this.staticFiles = staticFiles;
+  }
+
+  public findStaticFile(routePath: string): { uri: string; path: string } | undefined {
+    const normalized = routePath.split("?")[0].split("#")[0].trim();
+    const clean = normalized.startsWith("/") ? normalized : `/${normalized}`;
+    return this.staticFiles.get(clean) ?? this.staticFiles.get(clean.toLowerCase());
+  }
+
+  public get staticFilePaths(): readonly string[] {
+    return [...new Set([...this.staticFiles.values()].map((f) => f.path))];
   }
 
   public findTemplate(name: string): IndexedTemplate | undefined {
@@ -981,6 +1011,26 @@ const BUILTIN_TYPE_PROPERTIES = new Map<string, JavaProperty[]>([
     createBuiltinProperty("size", "int"),
     createBuiltinProperty("empty", "boolean"),
     createBuiltinProperty("isEmpty()", "boolean")
+  ]],
+  ["Map", [
+    createBuiltinProperty("size", "int"),
+    createBuiltinProperty("empty", "boolean"),
+    createBuiltinProperty("isEmpty()", "boolean"),
+    createBuiltinProperty("containsKey(Object)", "boolean"),
+    createBuiltinProperty("containsValue(Object)", "boolean"),
+    createBuiltinProperty("keySet()", "java.util.Set"),
+    createBuiltinProperty("values()", "java.util.Collection"),
+    createBuiltinProperty("entrySet()", "java.util.Set")
+  ]],
+  ["HashMap", [
+    createBuiltinProperty("size", "int"),
+    createBuiltinProperty("empty", "boolean"),
+    createBuiltinProperty("isEmpty()", "boolean"),
+    createBuiltinProperty("containsKey(Object)", "boolean"),
+    createBuiltinProperty("containsValue(Object)", "boolean"),
+    createBuiltinProperty("keySet()", "java.util.Set"),
+    createBuiltinProperty("values()", "java.util.Collection"),
+    createBuiltinProperty("entrySet()", "java.util.Set")
   ]],
   ["Optional", [
     createBuiltinProperty("present", "boolean"),

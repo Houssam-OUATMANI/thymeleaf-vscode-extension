@@ -255,7 +255,10 @@ function tokenizeExpression(
       // Check context: preceded by '.'?
       let lookBack = start - 1;
       while (lookBack >= 0 && /\s/.test(body[lookBack])) lookBack -= 1;
-      const isProperty = lookBack >= 0 && body[lookBack] === ".";
+      const isProperty = lookBack >= 0 && (
+        body[lookBack] === "." ||
+        (body[lookBack] === "." && body[lookBack - 1] === "?")
+      );
 
       // Followed by '('?
       let lookAhead = indexInBody;
