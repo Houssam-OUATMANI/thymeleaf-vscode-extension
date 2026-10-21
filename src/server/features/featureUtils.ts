@@ -407,13 +407,21 @@ export function resolveModelPath(
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
 
-  const rootMatch = /^\s*([#\w$]+)/.exec(body);
+  const rootMatch = /^\s*([@#\w$]+)/.exec(body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
   const rootName = rootMatch[1];
   const chainOffset = rootMatch.index + rootMatch[0].length;
   let rawTypeName: string | undefined = prefix === "*"
     ? findSelectedObjectType(text, expressionOffset, modelAttributes, index)
     : resolveModelType(rootName, text, expressionOffset, modelAttributes, index);
+
+  if (!rawTypeName && rootName.startsWith("@")) {
+    const beanName = rootName.slice(1);
+    const bean = index.findSpringBean(beanName);
+    if (bean) {
+      rawTypeName = bean.typeName;
+    }
+  }
 
   if (!rawTypeName && rootName.startsWith("#")) {
     const execObj = THYMELEAF_EXECUTION_OBJECTS[rootName];

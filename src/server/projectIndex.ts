@@ -10,6 +10,7 @@ import {
   JavaProperty,
   JavaTypeReference,
   SourcePosition,
+  SpringBeanInfo,
   substituteTypeParameters
 } from "./javaIndexer";
 import { findThymeleafAttributes } from "../thymeleaf/htmlParser";
@@ -90,6 +91,9 @@ export class ProjectIndex {
   private compilerTypes = new Map<string, JavaClass>();
   private ambiguousCompilerAliases = new Set<string>();
   private staticFiles = new Map<string, { uri: string; path: string }>();
+  private globalModelAttributes = new Map<string, string>();
+  private globalModelAttributePositions = new Map<string, { readonly uri: string; readonly position: SourcePosition }>();
+  private springBeansByName = new Map<string, SpringBeanInfo>();
 
   public get templates(): readonly IndexedTemplate[] {
     return [...this.templateByUri.values()].map((template) =>
@@ -312,6 +316,26 @@ export class ProjectIndex {
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
     this.staticFiles = staticFiles;
+
+    const globalModelAttributes = new Map<string, string>();
+    const globalModelAttributePositions = new Map<string, { uri: string; position: SourcePosition }>();
+    const springBeansByName = new Map<string, SpringBeanInfo>();
+    for (const idx of javaIndexes) {
+      for (const [k, v] of idx.globalModelAttributes) globalModelAttributes.set(k, v);
+      for (const [k, v] of idx.globalModelAttributePositions) globalModelAttributePositions.set(k, v);
+      for (const bean of idx.springBeans) springBeansByName.set(bean.name, bean);
+    }
+    this.globalModelAttributes = globalModelAttributes;
+    this.globalModelAttributePositions = globalModelAttributePositions;
+    this.springBeansByName = springBeansByName;
+  }
+
+  public findSpringBean(name: string): SpringBeanInfo | undefined {
+    return this.springBeansByName.get(name);
+  }
+
+  public get springBeans(): readonly SpringBeanInfo[] {
+    return [...this.springBeansByName.values()];
   }
 
   public findStaticFile(routePath: string): { uri: string; path: string } | undefined {
@@ -364,8 +388,8 @@ export class ProjectIndex {
   ): readonly ControllerHandler[] {
     const normalizedName = normalizeTemplateName(templateName);
     const workspaceRoot = templateUri ? this.workspaceRootForUri(templateUri) : undefined;
-    return this.handlers.filter(({ uri, viewName }) =>
-      viewName === normalizedName &&
+    return this.handlers.filter(({ uri, viewName, viewNames }) =>
+      (viewName === normalizedName || (viewNames && viewNames.includes(normalizedName))) &&
       (!workspaceRoot || this.workspaceRootForUri(uri) === workspaceRoot)
     );
   }
@@ -476,6 +500,9 @@ export class ProjectIndex {
       const [typeName] = types;
       if (types.size === 1 && typeName) attributes.set(name, typeName);
     }
+    for (const [name, typeName] of this.globalModelAttributes) {
+      attributes.set(name, typeName);
+    }
     if (template) {
       for (const thymesVar of template.thymesVars) {
         attributes.set(thymesVar.id, thymesVar.typeName);
@@ -494,6 +521,9 @@ export class ProjectIndex {
       Map<string, { readonly uri: string; readonly position: SourcePosition }>
     >();
     const template = templateUri ? this.findTemplateByUri(templateUri) : this.findTemplate(templateName);
+    for (const [name, def] of this.globalModelAttributePositions) {
+      definitions.set(name, def);
+    }
     if (template) {
       for (const thymesVar of template.thymesVars) {
         definitions.set(thymesVar.id, { uri: template.uri, position: thymesVar.position });

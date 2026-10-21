@@ -42,12 +42,21 @@ export interface JavaTypeReference {
   readonly typeName: string;
 }
 
+export interface SpringBeanInfo {
+  readonly name: string;
+  readonly typeName: string;
+  readonly uri: string;
+  readonly position: SourcePosition;
+}
+
 export interface ControllerHandler {
   readonly uri: string;
   readonly name: string;
   readonly routePaths: readonly string[];
   readonly viewName: string | undefined;
+  readonly viewNames?: readonly string[];
   readonly viewNameRange?: { readonly start: SourcePosition; readonly end: SourcePosition };
+  readonly viewTargets?: readonly { readonly name: string; readonly range: { readonly start: SourcePosition; readonly end: SourcePosition } }[];
   readonly position: SourcePosition;
   readonly modelAttributes: ReadonlyMap<string, string>;
   readonly modelAttributePositions: ReadonlyMap<string, SourcePosition>;
@@ -59,6 +68,9 @@ export interface JavaSourceIndex {
   readonly classes: readonly JavaClass[];
   readonly handlers: readonly ControllerHandler[];
   readonly typeReferences: readonly JavaTypeReference[];
+  readonly globalModelAttributes: ReadonlyMap<string, string>;
+  readonly globalModelAttributePositions: ReadonlyMap<string, { readonly uri: string; readonly position: SourcePosition }>;
+  readonly springBeans: readonly SpringBeanInfo[];
 }
 
 interface Token {
@@ -87,6 +99,10 @@ interface ParsedParameter {
 }
 
 const CONTROLLER_ANNOTATIONS = new Set(["Controller", "RestController"]);
+const ADVICE_ANNOTATIONS = new Set(["ControllerAdvice", "RestControllerAdvice"]);
+const SPRING_BEAN_ANNOTATIONS = new Set([
+  "Component", "Service", "Repository", "Controller", "RestController", "Configuration"
+]);
 const REQUEST_MAPPINGS = new Set([
   "RequestMapping",
   "GetMapping",
@@ -100,12 +116,18 @@ export function indexJavaSources(sources: ReadonlyMap<string, string>): JavaSour
   const classes: JavaClass[] = [];
   const handlers: ControllerHandler[] = [];
   const typeReferences: JavaTypeReference[] = [];
+  const globalModelAttributes = new Map<string, string>();
+  const globalModelAttributePositions = new Map<string, { uri: string; position: SourcePosition }>();
+  const springBeans: SpringBeanInfo[] = [];
 
   for (const [filePath, source] of sources) {
     const parsed = parseJavaSource(filePath, source);
     classes.push(...parsed.classes);
     handlers.push(...parsed.handlers);
     typeReferences.push(...parsed.typeReferences);
+    for (const [name, type] of parsed.globalModelAttributes) globalModelAttributes.set(name, type);
+    for (const [name, pos] of parsed.globalModelAttributePositions) globalModelAttributePositions.set(name, pos);
+    springBeans.push(...parsed.springBeans);
   }
 
   const classesByName = new Map<string, JavaClass>();
@@ -127,19 +149,36 @@ export function indexJavaSources(sources: ReadonlyMap<string, string>): JavaSour
     return { ...handler, modelAttributes, modelAttributePositions };
   });
 
-  return { classes, handlers: resolvedHandlers, typeReferences };
+  return {
+    classes,
+    handlers: resolvedHandlers,
+    typeReferences,
+    globalModelAttributes,
+    globalModelAttributePositions,
+    springBeans
+  };
 }
 
 function parseJavaSource(
   filePath: string,
   source: string
-): { classes: JavaClass[]; handlers: ControllerHandler[]; typeReferences: JavaTypeReference[] } {
+): {
+  classes: JavaClass[];
+  handlers: ControllerHandler[];
+  typeReferences: JavaTypeReference[];
+  globalModelAttributes: Map<string, string>;
+  globalModelAttributePositions: Map<string, { uri: string; position: SourcePosition }>;
+  springBeans: SpringBeanInfo[];
+} {
   const tokens = tokenizeJava(source);
   const packageName = readPackageName(tokens);
   const uri = pathToFileURL(filePath).toString();
   const classes: JavaClass[] = [];
   const handlers: ControllerHandler[] = [];
   const typeReferences: JavaTypeReference[] = [];
+  const globalModelAttributes = new Map<string, string>();
+  const globalModelAttributePositions = new Map<string, { uri: string; position: SourcePosition }>();
+  const springBeans: SpringBeanInfo[] = [];
 
   for (let index = 0; index < tokens.length; index += 1) {
     if (!["class", "record", "enum", "interface"].includes(tokens[index].text)) {
@@ -312,6 +351,30 @@ function parseJavaSource(
       superTypeNames
     });
 
+    const beanAnnotation = classAnnotations.find(({ name }) => SPRING_BEAN_ANNOTATIONS.has(name));
+    if (beanAnnotation) {
+      const explicitName = beanAnnotation.stringArguments[0]?.trim();
+      const beanName = explicitName || decapitalize(className);
+      springBeans.push({
+        name: beanName,
+        typeName: qualifiedName,
+        uri,
+        position: positionAt(source, nameToken.start)
+      });
+    }
+
+    if (classAnnotations.some(({ name }) => ADVICE_ANNOTATIONS.has(name))) {
+      for (const member of classMembers) {
+        if (member.kind === "method" && member.modelAttributeName) {
+          globalModelAttributes.set(member.modelAttributeName, member.returnType);
+          globalModelAttributePositions.set(
+            member.modelAttributeName,
+            { uri, position: positionAt(source, tokens[member.nameTokenIndex].start) }
+          );
+        }
+      }
+    }
+
     if (!classAnnotations.some(({ name }) => CONTROLLER_ANNOTATIONS.has(name))) {
       continue;
     }
@@ -386,17 +449,39 @@ function parseJavaSource(
         });
       }
 
+      let effectiveViewName = member.viewName;
+      let effectiveViewNames = member.viewNames ?? (member.viewName ? [member.viewName] : []);
+      if (
+        !effectiveViewName &&
+        effectiveRoutePaths.length > 0 &&
+        (member.returnType === "void" || member.returnType === "Model" || member.returnType === "ModelMap")
+      ) {
+        const conventionPath = effectiveRoutePaths[0].replace(/^\/+/, "").replace(/\.html$/i, "");
+        if (conventionPath && !conventionPath.includes("{")) {
+          effectiveViewName = conventionPath;
+          effectiveViewNames = [conventionPath];
+        }
+      }
+
       handlers.push({
         uri,
         name: member.name,
         routePaths: effectiveRoutePaths,
-        viewName: member.viewName,
+        viewName: effectiveViewName,
+        viewNames: effectiveViewNames,
         viewNameRange: member.viewNameOffsets
           ? {
               start: positionAt(source, member.viewNameOffsets.start),
               end: positionAt(source, member.viewNameOffsets.end)
             }
           : undefined,
+        viewTargets: member.viewTargets?.map((target) => ({
+          name: target.name,
+          range: {
+            start: positionAt(source, target.start),
+            end: positionAt(source, target.end)
+          }
+        })),
         position: positionAt(source, tokens[member.nameTokenIndex].start),
         modelAttributes,
         modelAttributePositions,
@@ -407,7 +492,14 @@ function parseJavaSource(
 
   }
 
-  return { classes, handlers, typeReferences };
+  return {
+    classes,
+    handlers,
+    typeReferences,
+    globalModelAttributes,
+    globalModelAttributePositions,
+    springBeans
+  };
 }
 
 type ClassMember =
@@ -435,7 +527,9 @@ type ClassMember =
       readonly modelAttributeName: string | undefined;
       readonly addedModelVariables: readonly [string, string, number][];
       readonly viewName: string | undefined;
+      readonly viewNames?: readonly string[];
       readonly viewNameOffsets?: { readonly start: number; readonly end: number };
+      readonly viewTargets?: readonly { readonly name: string; readonly start: number; readonly end: number }[];
       readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
       readonly javadoc?: string;
     };
@@ -561,9 +655,12 @@ function parseMethod(
     ([attributeName, variableName, tokenIndex]) =>
       [attributeName, variableName, tokenIndex + methodBodyStart + 1] as [string, string, number]
   );
-  const returnedView = findReturnedView(methodBody);
-  const viewName = returnedView?.name;
-  const viewNameOffsets = returnedView ? { start: returnedView.start, end: returnedView.end } : undefined;
+  const returnedViews = findReturnedViews(methodBody);
+  const primaryView = returnedViews[0];
+  const viewName = primaryView?.name;
+  const viewNames = returnedViews.map(({ name }) => name);
+  const viewNameOffsets = primaryView ? { start: primaryView.start, end: primaryView.end } : undefined;
+  const viewTargets = returnedViews.map((v) => ({ name: v.name, start: v.start, end: v.end }));
   const modelAnnotation = annotations.find(({ name }) => name === "ModelAttribute");
   const javadoc = tokens.slice(memberStart, nameTokenIndex).find((t) => t.leadingJavadoc)?.leadingJavadoc;
 
@@ -578,7 +675,9 @@ function parseMethod(
     modelAttributeName: modelAnnotation?.stringArguments[0] ?? (modelAnnotation ? name : undefined),
     addedModelVariables,
     viewName,
+    viewNames,
     viewNameOffsets,
+    viewTargets,
     typeReferences,
     ...(javadoc !== undefined && { javadoc })
   };
@@ -906,23 +1005,26 @@ function combinePaths(prefixes: readonly string[], suffixes: readonly string[]):
   return left.flatMap((prefix) => right.map((suffix) => `/${prefix}/${suffix}`.replace(/\/+/g, "/")));
 }
 
-function findReturnedView(
+function findReturnedViews(
   body: readonly Token[]
-): { readonly name: string; readonly start: number; readonly end: number } | undefined {
+): { readonly name: string; readonly start: number; readonly end: number }[] {
+  const views: { readonly name: string; readonly start: number; readonly end: number }[] = [];
+  const seen = new Set<string>();
+  const addView = (name: string, start: number, end: number) => {
+    if (name.startsWith("redirect:") || name.startsWith("forward:")) return;
+    if (!seen.has(name)) {
+      seen.add(name);
+      views.push({ name, start, end });
+    }
+  };
+
   // 1. Direct return: return "viewName", return ("viewName"), or return new ModelAndView("viewName" ...)
   for (let index = 0; index < body.length - 1; index += 1) {
     if (body[index].text === "return") {
       let nextIndex = index + 1;
       while (nextIndex < body.length && body[nextIndex].text === "(") nextIndex += 1;
       if (body[nextIndex]?.kind === "string") {
-        const value = body[nextIndex].text;
-        if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
-          return {
-            name: value,
-            start: body[nextIndex].start,
-            end: body[nextIndex].end
-          };
-        }
+        addView(body[nextIndex].text, body[nextIndex].start, body[nextIndex].end);
       }
       if (
         body[nextIndex]?.text === "new" &&
@@ -930,14 +1032,7 @@ function findReturnedView(
         body[nextIndex + 2]?.text === "(" &&
         body[nextIndex + 3]?.kind === "string"
       ) {
-        const value = body[nextIndex + 3].text;
-        if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
-          return {
-            name: value,
-            start: body[nextIndex + 3].start,
-            end: body[nextIndex + 3].end
-          };
-        }
+        addView(body[nextIndex + 3].text, body[nextIndex + 3].start, body[nextIndex + 3].end);
       }
     }
   }
@@ -945,14 +1040,7 @@ function findReturnedView(
   // 2. setViewName("viewName") anywhere in method body
   for (let index = 0; index < body.length - 2; index += 1) {
     if (body[index].text === "setViewName" && body[index + 1].text === "(" && body[index + 2].kind === "string") {
-      const value = body[index + 2].text;
-      if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
-        return {
-          name: value,
-          start: body[index + 2].start,
-          end: body[index + 2].end
-        };
-      }
+      addView(body[index + 2].text, body[index + 2].start, body[index + 2].end);
     }
   }
 
@@ -964,18 +1052,17 @@ function findReturnedView(
       body[index + 2].text === "(" &&
       body[index + 3].kind === "string"
     ) {
-      const value = body[index + 3].text;
-      if (!value.startsWith("redirect:") && !value.startsWith("forward:")) {
-        return {
-          name: value,
-          start: body[index + 3].start,
-          end: body[index + 3].end
-        };
-      }
+      addView(body[index + 3].text, body[index + 3].start, body[index + 3].end);
     }
   }
 
-  return undefined;
+  return views;
+}
+
+function decapitalize(name: string): string {
+  if (!name || name.length === 0) return name;
+  if (name.length > 1 && /^[A-Z]{2}/.test(name)) return name;
+  return name[0].toLowerCase() + name.slice(1);
 }
 
 function findAddedModelVariables(body: readonly Token[]): [string, string, number][] {

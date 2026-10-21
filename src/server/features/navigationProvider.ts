@@ -24,7 +24,8 @@ import {
   resolveModelPath,
   resolveModelType,
   routePath,
-  sameRoute
+  sameRoute,
+  THYMELEAF_EXECUTION_OBJECTS
 } from "./featureUtils";
 
 export function provideDefinition(
@@ -234,27 +235,64 @@ export function provideHover(
   }
 
   const route = findRouteReference(text, offset);
-  if (!route) return undefined;
-  const handlers = index.findHandlersForRoute(route.path);
-  if (handlers.length > 0) {
-    return {
-      contents: {
-        kind: "markdown",
-        value: `Spring route \`${route.path}\`\n\n${handlers.map(({ name }) => `- \`${name}()\``).join("\n")}`
-      },
-      range: rangeAt(document, route.range)
-    };
+  if (route) {
+    const handlers = index.findHandlersForRoute(route.path);
+    if (handlers.length > 0) {
+      return {
+        contents: {
+          kind: "markdown",
+          value: `Spring route \`${route.path}\`\n\n${handlers.map(({ name }) => `- \`${name}()\``).join("\n")}`
+        },
+        range: rangeAt(document, route.range)
+      };
+    }
+    const staticFile = index.findStaticFile(route.path);
+    if (staticFile) {
+      return {
+        contents: {
+          kind: "markdown",
+          value: `Static asset: \`${staticFile.path}\``
+        },
+        range: rangeAt(document, route.range)
+      };
+    }
   }
-  const staticFile = index.findStaticFile(route.path);
-  if (staticFile) {
-    return {
-      contents: {
-        kind: "markdown",
-        value: `Static asset: \`${staticFile.path}\``
-      },
-      range: rangeAt(document, route.range)
-    };
+
+  const expr = findEnclosingExpression(text, offset);
+  if (expr && expr.prefix === "$") {
+    const rootMatch = /^\s*([@#\w$]+)/.exec(expr.body);
+    if (rootMatch && rootMatch.index !== undefined) {
+      const rootName = rootMatch[1];
+      const rootStart = expr.start + 2 + rootMatch.index + rootMatch[0].length - rootName.length;
+      const rootEnd = rootStart + rootName.length;
+      if (offset >= rootStart && offset <= rootEnd) {
+        if (rootName.startsWith("@")) {
+          const bean = index.findSpringBean(rootName.slice(1));
+          if (bean) {
+            return {
+              contents: {
+                kind: "markdown",
+                value: `**@${bean.name}**: \`${bean.typeName}\`\n\nSpring Bean.`
+              },
+              range: rangeAtOffset(text, rootStart, rootEnd)
+            };
+          }
+        } else if (rootName.startsWith("#")) {
+          const execObj = THYMELEAF_EXECUTION_OBJECTS[rootName];
+          if (execObj) {
+            return {
+              contents: {
+                kind: "markdown",
+                value: `**${rootName}**\n\n${execObj.description}`
+              },
+              range: rangeAtOffset(text, rootStart, rootEnd)
+            };
+          }
+        }
+      }
+    }
   }
+
   return undefined;
 }
 
@@ -502,7 +540,7 @@ function findModelMethodOccurrences(
   templateUri?: string
 ): { readonly property: JavaProperty; readonly range: Range }[] {
   if (expression.prefix !== "$" && expression.prefix !== "*") return [];
-  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return [];
   const occurrences: { readonly property: JavaProperty; readonly range: Range }[] = [];
   let accessOffset = rootMatch.index + rootMatch[0].length;
@@ -547,7 +585,7 @@ function findModelPropertyOccurrences(
 ): { readonly property: JavaProperty; readonly range: Range }[] {
   if (expression.prefix !== "$" && expression.prefix !== "*") return [];
   const body = expression.body;
-  const rootMatch = /^\s*([\w$]+)/.exec(body);
+  const rootMatch = /^\s*([@#\w$]+)/.exec(body);
   if (!rootMatch || rootMatch.index === undefined) return [];
   const rootName = rootMatch[1];
   const occurrences: { property: JavaProperty; range: Range }[] = [];
@@ -685,7 +723,7 @@ function findModelMethodAt(
 ): JavaProperty | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || (expression.prefix !== "$" && expression.prefix !== "*")) return undefined;
-  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
 
   let accessOffset = rootMatch.index + rootMatch[0].length;
@@ -783,11 +821,15 @@ function findModelDefinitionAt(
 ): Location | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || expression.prefix !== "$") return undefined;
-  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
+  const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
   const modelName = rootMatch[1];
   const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - modelName.length;
   if (offset < rootStart || offset > rootStart + modelName.length) return undefined;
+  if (modelName.startsWith("@")) {
+    const bean = index.findSpringBean(modelName.slice(1));
+    return bean ? locationAt(bean.uri, bean.position) : undefined;
+  }
   return modelAttributeDefinition(templateName, modelName, index, text, templateUri) ??
     (() => {
       const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));

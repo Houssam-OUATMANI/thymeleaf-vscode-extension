@@ -244,6 +244,29 @@ export function provideCompletions(
       }
     }
 
+    if (modelNameContext.prefix.startsWith("@") || modelNameContext.prefix === "") {
+      for (const bean of index.springBeans) {
+        const beanLabel = `@${bean.name}`;
+        if (beanLabel.startsWith(modelNameContext.prefix)) {
+          items.push({
+            label: beanLabel,
+            kind: CompletionItemKind.Class,
+            detail: bean.typeName,
+            documentation: `Spring Bean \`@${bean.name}\` (${bean.typeName})`,
+            textEdit: TextEdit.replace(
+              Range.create(
+                position.line,
+                Math.max(0, position.character - modelNameContext.prefix.length),
+                position.line,
+                position.character
+              ),
+              beanLabel
+            )
+          });
+        }
+      }
+    }
+
     return prioritizeThymeleaf(items);
   }
 
@@ -380,7 +403,7 @@ function findModelPropertyContext(
 
   const bodyOffset = expression.start + 2;
   const beforeCursor = expression.body.slice(0, Math.max(0, offset - bodyOffset));
-  const chainMatch = /([\w$]+(?:\s*\.\s*[\w$]+(?:\s*\([^()]*\))?)*)\s*\.\s*([\w$]*)$/.exec(beforeCursor);
+  const chainMatch = /([@#\w$]+(?:\s*(?:\.|\?\.)\s*[\w$]+(?:\s*\([^()]*\))?)*)\s*(?:\.|\?\.)\s*([\w$]*)$/.exec(beforeCursor);
   if (!chainMatch) return undefined;
 
   const resolved = resolveModelPath(
@@ -413,7 +436,7 @@ function findModelNameContext(
   const beforeCursor = expression.body.slice(0, Math.max(0, offset - bodyStart));
   const lastDot = beforeCursor.lastIndexOf(".");
   if (lastDot >= 0) return undefined;
-  const match = /([#\w$]*)$/.exec(beforeCursor);
+  const match = /([@#\w$]*)$/.exec(beforeCursor);
   return { templateName, prefix: match ? match[1] : beforeCursor.trim() };
 }
 

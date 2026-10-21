@@ -2428,6 +2428,193 @@ public class MapController {
   }
 });
 
+test("indexes Spring @ControllerAdvice global model attributes across templates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-advice-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const adviceFile = path.join(java, "GlobalAdvice.java");
+  const templatePath = path.join(templates, "page.html");
+
+  const adviceJava = `package demo;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ModelAttribute;
+
+public class CurrentUser {
+  public String username;
+  public String email;
+}
+
+@ControllerAdvice
+public class GlobalAdvice {
+  @ModelAttribute("currentUser")
+  public CurrentUser getCurrentUser() {
+    return new CurrentUser();
+  }
+}
+`;
+  const templateContent = `<p th:text="\${currentUser.username}"></p>
+<p th:text="\${currentUser.invalidField}"></p>
+`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(adviceFile, adviceJava),
+      writeFile(templatePath, templateContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // currentUser.username is valid; currentUser.invalidField is reported
+    const unknownProps = diagnostics.filter((d) => d.code === "unknown-model-property");
+    assert.equal(unknownProps.length, 1);
+    assert.match(unknownProps[0].message, /invalidField/);
+
+    // Navigation on username
+    const usernameOffset = templateContent.indexOf("username");
+    const definition = provideDefinition(doc, doc.positionAt(usernameOffset + 1), index);
+    assert.ok(definition, "Should navigate to CurrentUser.username");
+    assert.equal(definition.uri, pathToFileURL(adviceFile).toString());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("indexes multiple returned views in controller handlers for navigation and code lenses", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-multi-views-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const controllerFile = path.join(java, "MultiViewController.java");
+  const successTemplate = path.join(templates, "success.html");
+
+  const controllerJava = `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class MultiViewController {
+  @GetMapping("/flow")
+  public String flow(boolean ok) {
+    if (ok) {
+      return "success";
+    }
+    return "error";
+  }
+}
+`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(controllerFile, controllerJava),
+      writeFile(successTemplate, "<h1>Success</h1>")
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // Check that handlers match both returned views
+    const successHandlers = index.getHandlersForTemplate("success");
+    const errorHandlers = index.getHandlersForTemplate("error");
+    assert.equal(successHandlers.length, 1);
+    assert.equal(errorHandlers.length, 1);
+    assert.equal(successHandlers[0].name, "flow");
+    assert.equal(errorHandlers[0].name, "flow");
+
+    // Check CodeLenses generated for the controller
+    const javaDoc = TextDocument.create(pathToFileURL(controllerFile).toString(), "java", 1, controllerJava);
+    const lenses = provideCodeLenses(javaDoc, index);
+    assert.ok(lenses.some((l) => l.command?.title.includes("success.html")), "Expected CodeLens for success.html");
+    assert.ok(lenses.some((l) => l.command?.title.includes("error.html")), "Expected CodeLens for missing error.html");
+
+    // validateJavaDocument should report error.html as missing, but not success.html
+    const javaDiagnostics = validateJavaDocument(javaDoc, index);
+    assert.equal(javaDiagnostics.length, 1);
+    assert.match(javaDiagnostics[0].message, /error\.html/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("supports Spring Beans @Service and @Component in SpEL expressions with navigation, hover and completion", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-spring-beans-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const serviceFile = path.join(java, "SecurityService.java");
+  const templatePath = path.join(templates, "secure.html");
+
+  const serviceJava = `package demo;
+import org.springframework.stereotype.Service;
+
+@Service("authz")
+public class SecurityService {
+  public boolean hasPermission(String role) {
+    return true;
+  }
+}
+`;
+  const templateContent = `<div th:if="\${@authz.hasPermission('ADMIN')}">Admin Only</div>
+<div th:if="\${@authz.invalidMethod()}">Broken</div>
+`;
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(serviceFile, serviceJava),
+      writeFile(templatePath, templateContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    assert.ok(index.findSpringBean("authz"), "Spring bean @authz should be indexed");
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+
+    // @authz.hasPermission is valid; @authz.invalidMethod is reported
+    const unknownProps = diagnostics.filter((d) => d.code === "unknown-model-property");
+    assert.equal(unknownProps.length, 1);
+    assert.match(unknownProps[0].message, /invalidMethod/);
+
+    // Navigation on @authz jumps to SecurityService
+    const authzOffset = templateContent.indexOf("@authz");
+    const beanDef = provideDefinition(doc, doc.positionAt(authzOffset + 2), index);
+    assert.ok(beanDef, "Should navigate to Spring Bean @authz");
+    assert.equal(beanDef.uri, pathToFileURL(serviceFile).toString());
+
+    // Navigation on hasPermission jumps to method definition
+    const methodOffset = templateContent.indexOf("hasPermission");
+    const methodDef = provideDefinition(doc, doc.positionAt(methodOffset + 2), index);
+    assert.ok(methodDef, "Should navigate to SecurityService.hasPermission");
+    assert.equal(methodDef.uri, pathToFileURL(serviceFile).toString());
+
+    // Hover on @authz shows Spring bean details
+    const beanHover = provideHover(doc, doc.positionAt(authzOffset + 2), index);
+    assert.ok(beanHover, "Hover on @authz should return bean info");
+    assert.match(beanHover.contents.value, /Spring Bean/);
+
+    // Completion on ${@ offers @authz
+    const completions = provideCompletions(doc, doc.positionAt(authzOffset + 1), index);
+    assert.ok(completions.some((c: any) => c.label === "@authz"), "Completion should suggest @authz");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

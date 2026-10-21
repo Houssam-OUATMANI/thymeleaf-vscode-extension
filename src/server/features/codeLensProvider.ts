@@ -23,29 +23,35 @@ export function provideCodeLenses(
 
   if (document.languageId === "java") {
     for (const handler of index.controllerHandlers) {
-      if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
-      const targetTemplate = index.findTemplate(handler.viewName);
+      if (!sameFileUri(handler.uri, document.uri)) continue;
+      const viewNames = handler.viewNames && handler.viewNames.length > 0
+        ? handler.viewNames
+        : handler.viewName ? [handler.viewName] : [];
+      if (viewNames.length === 0) continue;
       const line = handler.position.line;
 
-      if (targetTemplate) {
-        lenses.push({
-          range: Range.create(Position.create(line, 0), Position.create(line, 0)),
-          command: {
-            title: `$(file-code) Open template '${handler.viewName}.html'`,
-            command: "thymeleaf.openTemplate",
-            arguments: [targetTemplate.uri]
-          }
-        });
-      } else {
-        const normalized = normalizeTemplateName(handler.viewName);
-        lenses.push({
-          range: Range.create(Position.create(line, 0), Position.create(line, 0)),
-          command: {
-            title: `$(new-file) Create template '${normalized}.html'`,
-            command: "thymeleaf.createTemplate",
-            arguments: [normalized, document.uri]
-          }
-        });
+      for (const viewName of viewNames) {
+        const targetTemplate = index.findTemplate(viewName);
+        if (targetTemplate) {
+          lenses.push({
+            range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+            command: {
+              title: `$(file-code) Open template '${viewName}.html'`,
+              command: "thymeleaf.openTemplate",
+              arguments: [targetTemplate.uri]
+            }
+          });
+        } else {
+          const normalized = normalizeTemplateName(viewName);
+          lenses.push({
+            range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+            command: {
+              title: `$(new-file) Create template '${normalized}.html'`,
+              command: "thymeleaf.createTemplate",
+              arguments: [normalized, document.uri]
+            }
+          });
+        }
       }
     }
     return lenses;
@@ -114,19 +120,25 @@ export function provideGutterDecorations(
 
   if (languageId === "java") {
     for (const handler of index.controllerHandlers) {
-      if (!sameFileUri(handler.uri, documentUri) || !handler.viewName) continue;
-      const targetTemplate = index.findTemplate(handler.viewName);
-      if (targetTemplate) {
-        decorations.push({
-          line: handler.position.line,
-          tooltip: `Thymeleaf template: ${handler.viewName}.html`
-        });
-      } else {
-        const normalized = normalizeTemplateName(handler.viewName);
-        decorations.push({
-          line: handler.position.line,
-          tooltip: `Missing Thymeleaf template: ${normalized}.html (click CodeLens or run Quick Fix to create)`
-        });
+      if (!sameFileUri(handler.uri, documentUri)) continue;
+      const viewNames = handler.viewNames && handler.viewNames.length > 0
+        ? handler.viewNames
+        : handler.viewName ? [handler.viewName] : [];
+      if (viewNames.length === 0) continue;
+      for (const viewName of viewNames) {
+        const targetTemplate = index.findTemplate(viewName);
+        if (targetTemplate) {
+          decorations.push({
+            line: handler.position.line,
+            tooltip: `Thymeleaf template: ${viewName}.html`
+          });
+        } else {
+          const normalized = normalizeTemplateName(viewName);
+          decorations.push({
+            line: handler.position.line,
+            tooltip: `Missing Thymeleaf template: ${normalized}.html (click CodeLens or run Quick Fix to create)`
+          });
+        }
       }
     }
   } else if (languageId === "html") {

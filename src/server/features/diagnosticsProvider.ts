@@ -312,27 +312,34 @@ export function provideCodeActions(
 
   if (document.languageId === "java") {
     for (const handler of index.controllerHandlers) {
-      if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
-      const normalized = normalizeTemplateName(handler.viewName);
-      if (index.findTemplate(normalized)) continue;
+      if (!sameFileUri(handler.uri, document.uri)) continue;
+      const viewNames = handler.viewNames && handler.viewNames.length > 0
+        ? handler.viewNames
+        : handler.viewName ? [handler.viewName] : [];
 
-      const handlerLine = handler.position.line;
-      const viewLine = handler.viewNameRange?.start.line ?? handlerLine;
-      const minLine = Math.min(handlerLine, viewLine);
-      const maxLine = Math.max(handlerLine, viewLine);
-      if (range.start.line >= minLine - 1 && range.start.line <= maxLine + 2) {
-        const title = `Create template '${normalized}.html'`;
-        if (!actions.some((a) => a.title === title)) {
-          actions.push({
-            title,
-            kind: CodeActionKind.QuickFix,
-            isPreferred: true,
-            command: {
+      for (const viewName of viewNames) {
+        const normalized = normalizeTemplateName(viewName);
+        if (index.findTemplate(normalized)) continue;
+
+        const target = handler.viewTargets?.find((t) => t.name === viewName);
+        const viewLine = target ? target.range.start.line : (handler.viewNameRange?.start.line ?? handler.position.line);
+        const handlerLine = handler.position.line;
+        const minLine = Math.min(handlerLine, viewLine);
+        const maxLine = Math.max(handlerLine, viewLine);
+        if (range.start.line >= minLine - 1 && range.start.line <= maxLine + 2) {
+          const title = `Create template '${normalized}.html'`;
+          if (!actions.some((a) => a.title === title)) {
+            actions.push({
               title,
-              command: "thymeleaf.createTemplate",
-              arguments: [normalized, document.uri]
-            }
-          });
+              kind: CodeActionKind.QuickFix,
+              isPreferred: true,
+              command: {
+                title,
+                command: "thymeleaf.createTemplate",
+                arguments: [normalized, document.uri]
+              }
+            });
+          }
         }
       }
     }
@@ -377,28 +384,45 @@ export function validateJavaDocument(
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   for (const handler of index.controllerHandlers) {
-    if (!sameFileUri(handler.uri, document.uri) || !handler.viewName) continue;
-    const normalized = normalizeTemplateName(handler.viewName);
-    const targetTemplate = index.findTemplate(normalized);
-    if (targetTemplate) continue;
+    if (!sameFileUri(handler.uri, document.uri)) continue;
+    if (handler.viewTargets && handler.viewTargets.length > 0) {
+      for (const target of handler.viewTargets) {
+        const normalized = normalizeTemplateName(target.name);
+        if (index.findTemplate(normalized)) continue;
+        diagnostics.push({
+          range: Range.create(
+            Position.create(target.range.start.line, target.range.start.character),
+            Position.create(target.range.end.line, target.range.end.character)
+          ),
+          severity: DiagnosticSeverity.Information,
+          code: "missing-controller-view",
+          source: "Thymeleaf",
+          message: `Thymeleaf template '${normalized}.html' does not exist.`
+        });
+      }
+    } else if (handler.viewName) {
+      const normalized = normalizeTemplateName(handler.viewName);
+      const targetTemplate = index.findTemplate(normalized);
+      if (!targetTemplate) {
+        const range = handler.viewNameRange
+          ? Range.create(
+              Position.create(handler.viewNameRange.start.line, handler.viewNameRange.start.character),
+              Position.create(handler.viewNameRange.end.line, handler.viewNameRange.end.character)
+            )
+          : Range.create(
+              Position.create(handler.position.line, 0),
+              Position.create(handler.position.line, 100)
+            );
 
-    const range = handler.viewNameRange
-      ? Range.create(
-          Position.create(handler.viewNameRange.start.line, handler.viewNameRange.start.character),
-          Position.create(handler.viewNameRange.end.line, handler.viewNameRange.end.character)
-        )
-      : Range.create(
-          Position.create(handler.position.line, 0),
-          Position.create(handler.position.line, 100)
-        );
-
-    diagnostics.push({
-      range,
-      severity: DiagnosticSeverity.Information,
-      code: "missing-controller-view",
-      source: "Thymeleaf",
-      message: `Thymeleaf template '${normalized}.html' does not exist.`
-    });
+        diagnostics.push({
+          range,
+          severity: DiagnosticSeverity.Information,
+          code: "missing-controller-view",
+          source: "Thymeleaf",
+          message: `Thymeleaf template '${normalized}.html' does not exist.`
+        });
+      }
+    }
   }
   return diagnostics;
 }
@@ -453,7 +477,7 @@ function validateModelProperties(
 }
 
 function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
-  if (/^[#\w$]+(?:(?:\.|\?\.)[#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(body.trim())) {
+  if (/^[@#\w$]+(?:(?:\.|\?\.)[@#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(body.trim())) {
     const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
     return [{ subPath: body.trim(), offset: leadingSpaces }];
   }
@@ -464,7 +488,7 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
     "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof"
   ]);
 
-  const pathRegex = /(?:#|[a-zA-Z_$])[\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])+/g;
+  const pathRegex = /(?:[@#]|[a-zA-Z_$])[\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])+/g;
   for (const match of body.matchAll(pathRegex)) {
     if (match.index === undefined) continue;
     const pathStr = match[0];
@@ -475,7 +499,7 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
   }
 
   if (results.length === 0) {
-    const simpleMatch = /^\s*([#a-zA-Z_$][\w$]*)/.exec(body);
+    const simpleMatch = /^\s*([@#a-zA-Z_$][\w$]*)/.exec(body);
     if (simpleMatch && !keywords.has(simpleMatch[1])) {
       results.push({ subPath: simpleMatch[1], offset: simpleMatch.index ?? 0 });
     }
