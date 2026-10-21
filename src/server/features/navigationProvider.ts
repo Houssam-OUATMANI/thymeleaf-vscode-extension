@@ -11,7 +11,7 @@ import {
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
 import { JavaProperty } from "../javaIndexer";
-import { findThymesVars, ProjectIndex, normalizeTemplateName, sameFileUri } from "../projectIndex";
+import { findThymesVars, IndexedTemplate, ProjectIndex, normalizeTemplateName, sameFileUri } from "../projectIndex";
 import {
   escapeRegExp,
   findEnclosingExpression,
