@@ -2,9 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.7.0] - 2026-10-21
+
+### Added
+
+- Support `@ControllerAdvice` global model attributes — attributes added via `@ModelAttribute` in advice classes are now available across all templates for completion, hover, navigation, and validation.
+- Support multiple returned views in controller handlers — handlers that return multiple view names (via arrays, conditionals, or `viewTargets`) now generate code lenses and gutter decorations for each resolved view, with diagnostics and quick fixes per target.
+- Support Spring Beans (`@Service`, `@Component`, `@Repository`) in SpEL expressions — `@beanName.property` references complete, navigate to their Java declaration, display hover documentation, and report unknown properties.
+- Expand built-in Thymeleaf execution objects — `#arrays`, `#bools`, `#objects`, `#authentication`, `#authorization`, `#vars`, `#root`, and others are now recognized and exempt from unknown-property diagnostics.
+- Support Thymeleaf Layout Dialect — `layout:decorate` template references are validated and navigable; `layout:fragment` definitions are indexed and available for cross-template fragment navigation and references.
+
 ## [0.6.0] - 2026-10-19
 
 ### Added
+
 
 - Add syntax highlighting and Java navigation for model variables and Java types declared in `@thymesVar` HTML comments.
 - Add syntax highlighting for Thymeleaf inline expressions and Java-backed properties and methods.
