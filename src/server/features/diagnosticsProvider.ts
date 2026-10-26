@@ -14,6 +14,7 @@ import {
   findThymeleafExpressions,
   findUnclosedAttributeExpressions,
   findUnclosedInlineExpressions,
+  maskStringLiterals,
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
@@ -612,45 +613,6 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
   return results;
 }
 
-function maskStringLiterals(text: string): string {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let escaped = false;
-  const chars = text.split("");
-
-  for (let i = 0; i < chars.length; i += 1) {
-    const char = chars[i];
-    if (escaped) {
-      if (inSingleQuote || inDoubleQuote) {
-        chars[i] = " ";
-      }
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      if (inSingleQuote || inDoubleQuote) {
-        chars[i] = " ";
-      }
-      continue;
-    }
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      chars[i] = " ";
-      continue;
-    }
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      chars[i] = " ";
-      continue;
-    }
-    if (inSingleQuote || inDoubleQuote) {
-      chars[i] = " ";
-    }
-  }
-
-  return chars.join("");
-}
 
 function isKnownAttribute(name: string): boolean {
   return ATTRIBUTE_NAMES.has(name) ||

@@ -2749,6 +2749,17 @@ test("validates undefined variables and provides quick fixes", async () => {
     const ternaryDoc = TextDocument.create(fixture.templateUri, "html", 2, ternaryTemplate);
     const ternaryDiags = validateDocument(ternaryDoc, fixture.index, DEFAULT_SETTINGS);
     assert.deepEqual(ternaryDiags.filter((d) => d.code === "undefined-variable"), []);
+
+    // Nested expressions inside link expressions @{...} must be validated for undefined variables
+    const linkTemplate = `<a th:href="@{/(page=\${user != null ? 1 : 0}, term=\${pss.term})}"></a>`;
+    const linkDoc = TextDocument.create(fixture.templateUri, "html", 3, linkTemplate);
+    const linkDiags = validateDocument(linkDoc, fixture.index, DEFAULT_SETTINGS);
+    const pssDiag = linkDiags.find((d) => d.code === "undefined-variable" && d.message.includes("'pss'"));
+    assert.ok(pssDiag, "Should report undefined-variable for 'pss' inside link parameters");
+    const linkText = linkDoc.getText();
+    const startOffset = linkDoc.offsetAt(pssDiag.range.start);
+    const endOffset = linkDoc.offsetAt(pssDiag.range.end);
+    assert.equal(linkText.slice(startOffset, endOffset), "pss");
   } finally {
     await fixture.dispose();
   }

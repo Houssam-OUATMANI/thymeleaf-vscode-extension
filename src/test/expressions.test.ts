@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
+  findThymeleafExpressions,
   findUnclosedAttributeExpressions,
   findUnclosedExpressions
 } from "../thymeleaf/expressions";
@@ -37,3 +38,16 @@ test("does not report JavaScript template strings as Thymeleaf expressions", () 
     []
   );
 });
+
+test("extracts nested expressions inside link and fragment expressions", () => {
+  const exprs = findThymeleafExpressions('@{/(page=${page + 1}, limit=${ps.size}, term=${pss.term})}');
+  assert.equal(exprs.length, 4);
+  assert.equal(exprs[0].prefix, "@");
+  assert.equal(exprs[1].prefix, "$");
+  assert.equal(exprs[1].body, "page + 1");
+  assert.equal(exprs[2].prefix, "$");
+  assert.equal(exprs[2].body, "ps.size");
+  assert.equal(exprs[3].prefix, "$");
+  assert.equal(exprs[3].body, "pss.term");
+});
+

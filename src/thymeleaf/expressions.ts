@@ -23,17 +23,71 @@ export function findThymeleafExpressions(text: string): ThymeleafExpression[] {
     const closingBrace = findExpressionEnd(text, index + 1);
     const closed = closingBrace >= 0;
     const bodyEnd = closed ? closingBrace : text.length;
+    const body = text.slice(index + 2, bodyEnd);
     expressions.push({
       prefix: text[index],
-      body: text.slice(index + 2, bodyEnd),
+      body,
       start: index,
       end: closed ? closingBrace + 1 : text.length,
       closed
     });
     if (!closed) break;
+
+    const maskedBody = maskStringLiterals(body);
+    const nested = findThymeleafExpressions(maskedBody);
+    for (const inner of nested) {
+      expressions.push({
+        prefix: inner.prefix,
+        body: body.slice(inner.start + 2, inner.end - (inner.closed ? 1 : 0)),
+        start: index + 2 + inner.start,
+        end: index + 2 + inner.end,
+        closed: inner.closed
+      });
+    }
+
     index = closingBrace;
   }
   return expressions;
+}
+
+export function maskStringLiterals(text: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+  const chars = text.split("");
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const char = chars[i];
+    if (escaped) {
+      if (inSingleQuote || inDoubleQuote) {
+        chars[i] = " ";
+      }
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      if (inSingleQuote || inDoubleQuote) {
+        chars[i] = " ";
+      }
+      continue;
+    }
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      chars[i] = " ";
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      chars[i] = " ";
+      continue;
+    }
+    if (inSingleQuote || inDoubleQuote) {
+      chars[i] = " ";
+    }
+  }
+
+  return chars.join("");
 }
 
 export function findUnclosedExpressions(text: string): UnclosedExpression[] {

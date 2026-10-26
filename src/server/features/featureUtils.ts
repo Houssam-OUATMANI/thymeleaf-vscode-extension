@@ -842,19 +842,15 @@ export function findEnclosingExpression(
   text: string,
   offset: number
 ): { prefix: string; body: string; start: number; end: number } | undefined {
-  const modelExpression = /([$*])\{([^{}]*)\}/g;
-  for (const match of text.matchAll(modelExpression)) {
-    if (match.index === undefined) continue;
-    const bodyStart = match.index + 2;
-    const bodyEnd = bodyStart + (match[2]?.length ?? 0);
-    if (offset >= match.index && offset <= bodyEnd) {
-      return { prefix: match[1], body: match[2] ?? "", start: match.index, end: bodyEnd + 1 };
-    }
-  }
+  const matches: { prefix: string; body: string; start: number; end: number }[] = [];
   for (const expression of findThymeleafExpressions(text)) {
     if (offset >= expression.start && offset <= expression.end) {
-      return expression;
+      matches.push(expression);
     }
+  }
+  if (matches.length > 0) {
+    matches.sort((a, b) => (a.end - a.start) - (b.end - b.start));
+    return matches[0];
   }
   const open = Math.max(text.lastIndexOf("${", offset), text.lastIndexOf("*{", offset));
   if (open >= 0 && !text.slice(open, offset).includes("}")) {
