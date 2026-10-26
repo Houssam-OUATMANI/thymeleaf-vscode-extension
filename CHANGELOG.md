@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+
+
+## [0.8.0] - 2026-10-26
 
 ### Added
 
@@ -20,7 +22,6 @@ All notable changes to this project are documented in this file.
 
 - Prevent false-positive `undefined-variable` diagnostics on CSS class names and text in string literals (e.g., `'btn btn-outline'` inside ternary expressions).
 - Extract and validate `${...}` expressions nested inside `@{...}` link expressions — variables in URL parameters like `@{/(page=${page}, term=${pss.term})}` are now checked for undefined-variable diagnostics, enabling detection of typos such as `pss` instead of `ps`.
-
 
 ## [0.7.0] - 2026-10-21
 
