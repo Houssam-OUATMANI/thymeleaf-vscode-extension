@@ -15,9 +15,12 @@ import { findThymesVars, IndexedTemplate, ProjectIndex, normalizeTemplateName, s
 import {
   escapeRegExp,
   findEnclosingExpression,
+  findEnclosingLocalVariables,
+  findSelectedObjectType,
   getCollectionElementType,
   locationAt,
   modelAttributeDefinition,
+  positionAt,
   rangeAt,
   rangeAtOffset,
   resolveExpressionProperty,
@@ -737,6 +740,25 @@ function findModelMethodAt(
   const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
   if (!rootMatch || rootMatch.index === undefined) return undefined;
 
+  if (expression.prefix === "*") {
+    const rootName = rootMatch[1];
+    const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - rootName.length;
+    const rootEnd = rootStart + rootName.length;
+    const remainingAfterRoot = expression.body.slice(rootMatch.index + rootMatch[0].length);
+    if (/^\s*\(/.test(remainingAfterRoot)) {
+      if (offset >= rootStart && offset <= rootEnd) {
+        const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
+        for (const thymesVar of findThymesVars(text)) {
+          modelAttributes.set(thymesVar.id, thymesVar.typeName);
+        }
+        const selectedType = findSelectedObjectType(text, expression.start, modelAttributes, index);
+        if (selectedType) {
+          return index.findMethodDefinition(selectedType, rootName);
+        }
+      }
+    }
+  }
+
   let accessOffset = rootMatch.index + rootMatch[0].length;
   while (accessOffset < expression.body.length) {
     const access = readMemberAccess(expression.body, accessOffset);
@@ -841,12 +863,21 @@ function findModelDefinitionAt(
     const bean = index.findSpringBean(modelName.slice(1));
     return bean ? locationAt(bean.uri, bean.position) : undefined;
   }
+
+  const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
+  for (const thymesVar of findThymesVars(text)) {
+    modelAttributes.set(thymesVar.id, thymesVar.typeName);
+  }
+
+  // 1. Chercher si modelName est une variable locale déclarée (th:each, th:with, th:fragment args)
+  const localVars = findEnclosingLocalVariables(text, expression.start, modelAttributes, index);
+  const foundLocal = localVars.find((v) => v.name === modelName);
+  if (foundLocal) {
+    return locationAt(templateUri, positionAt(text, foundLocal.declarationOffset));
+  }
+
   return modelAttributeDefinition(templateName, modelName, index, text, templateUri) ??
     (() => {
-      const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
-      for (const thymesVar of findThymesVars(text)) {
-        modelAttributes.set(thymesVar.id, thymesVar.typeName);
-      }
       const typeName = resolveModelType(
         modelName,
         text,
@@ -873,14 +904,29 @@ function findFragmentReference(
   }
 
   for (const attribute of findThymeleafAttributes(text)) {
-    if (attribute.name !== "layout:decorate" && attribute.name !== "layout:decorator") continue;
-    if (offset >= attribute.valueStart && offset <= attribute.valueStart + attribute.value.length) {
-      const raw = attribute.value.trim().replace(/^['"]|['"]$/g, "");
-      const [templateName, fragment] = raw.split("::", 2).map((part) => part.trim());
-      return {
-        templateName: templateName ? normalizeTemplateName(templateName) : undefined,
-        fragmentName: fragment?.split("(", 1)[0]?.trim()
-      };
+    if (attribute.name === "layout:decorate" || attribute.name === "layout:decorator") {
+      if (offset >= attribute.valueStart && offset <= attribute.valueStart + attribute.value.length) {
+        const raw = attribute.value.trim().replace(/^['"]|['"]$/g, "");
+        const [templateName, fragment] = raw.split("::", 2).map((part) => part.trim());
+        return {
+          templateName: templateName ? normalizeTemplateName(templateName) : undefined,
+          fragmentName: fragment?.split("(", 1)[0]?.trim()
+        };
+      }
+    } else if (attribute.name === "layout:fragment" || attribute.name === "th:fragment") {
+      if (offset >= attribute.valueStart && offset <= attribute.valueStart + attribute.value.length) {
+        const fragName = attribute.value.trim().split("(", 1)[0]?.trim();
+        for (const otherAttr of findThymeleafAttributes(text)) {
+          if (otherAttr.name === "layout:decorate" || otherAttr.name === "layout:decorator") {
+            const raw = otherAttr.value.trim().replace(/^['"]|['"]$/g, "");
+            const [parentTemplateName] = raw.split("::", 2).map((part) => part.trim());
+            return {
+              templateName: parentTemplateName ? normalizeTemplateName(parentTemplateName) : undefined,
+              fragmentName: fragName
+            };
+          }
+        }
+      }
     }
   }
 
@@ -1002,7 +1048,10 @@ function findJavaStringAt(
     const valueEnd = valueStart + (match[2]?.length ?? 0);
     if (offset < valueStart || offset > valueEnd) continue;
     const prefix = text.slice(0, match.index);
-    if (/return\s*$/.test(prefix) && !/redirect:|forward:/.test(match[2] ?? "")) {
+    if (
+      (/return\s*$/.test(prefix) && !/redirect:|forward:/.test(match[2] ?? "")) ||
+      /(?:setViewName|new\s+ModelAndView)\s*\([^)]*$/.test(prefix)
+    ) {
       return { kind: "view", value: match[2] ?? "" };
     }
     if (/@(?:Request|Get|Post|Put|Patch|Delete)?Mapping\s*\([^)]*$/.test(prefix)) {

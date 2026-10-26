@@ -2748,6 +2748,63 @@ test("validates undefined variables and provides quick fixes", async () => {
   }
 });
 
+test("navigates to local variable declarations, selection methods, and Java ModelAndView", async () => {
+  const fixture = await createFixture();
+  try {
+    const templateWithLocal = `<div th:each="item : \${ps}">
+  <span th:text="\${item.title}"></span>
+</div>
+<div th:with="discount = 0.2">
+  <span th:text="\${discount}"></span>
+</div>
+<div th:object="\${ps}">
+  <span th:text="*{isFirst()}"></span>
+</div>`;
+
+    const doc = TextDocument.create(fixture.templateUri, "html", 1, templateWithLocal);
+
+    // 1. F12 on 'item' inside ${item.title} navigates to th:each="item : ${ps}"
+    const itemOffset = templateWithLocal.indexOf("item.title");
+    const itemDef = provideDefinition(doc, doc.positionAt(itemOffset), fixture.index);
+    assert.ok(itemDef, "Definition for item should be found");
+    assert.equal(itemDef.uri, fixture.templateUri, "Should navigate within the same HTML template");
+    const eachItemOffset = templateWithLocal.indexOf("item : ");
+    assert.deepEqual(itemDef.range.start, doc.positionAt(eachItemOffset));
+
+    // 2. F12 on 'discount' inside ${discount} navigates to th:with="discount = 0.2"
+    const discountUsage = templateWithLocal.lastIndexOf("discount");
+    const discountDef = provideDefinition(doc, doc.positionAt(discountUsage), fixture.index);
+    assert.ok(discountDef, "Definition for discount should be found");
+    assert.equal(discountDef.uri, fixture.templateUri);
+    const withOffset = templateWithLocal.indexOf("discount =");
+    assert.deepEqual(discountDef.range.start, doc.positionAt(withOffset));
+
+    // 3. F12 on 'isFirst' inside *{isFirst()} navigates to Java method
+    const isFirstOffset = templateWithLocal.indexOf("isFirst");
+    const isFirstDef = provideDefinition(doc, doc.positionAt(isFirstOffset), fixture.index);
+    assert.ok(isFirstDef, "Definition for isFirst() should be found on selected object");
+
+    // 4. Navigation from Java ModelAndView to template
+    const javaDoc = TextDocument.create(
+      pathToFileURL(fixture.controllerPath).toString(),
+      "java",
+      1,
+      `package demo;
+class MyCtrl {
+  ModelAndView test() {
+    return new ModelAndView("users/list");
+  }
+}`
+    );
+    const viewOffset = javaDoc.getText().indexOf("users/list");
+    const viewDef = provideDefinition(javaDoc, javaDoc.positionAt(viewOffset + 2), fixture.index);
+    assert.ok(viewDef, "Should navigate from ModelAndView to template");
+    assert.equal(viewDef.uri, fixture.templateUri);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

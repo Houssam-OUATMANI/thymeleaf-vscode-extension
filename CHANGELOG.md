@@ -11,6 +11,10 @@ All notable changes to this project are documented in this file.
 - Add configuration `thymeleaf.validation.undefinedVariables` (defaults to `true`).
 - Recognize parameterized fragment variables (`th:fragment="name(arg1, arg2)"` and `layout:fragment`) in enclosing local scope.
 - Recognize additional Thymeleaf execution objects (`#fields`, `#messages`, `#uris`, `#temporals`, `#locale`, `#ctx`, `#request`, `#response`, `#session`) and implicit servlet objects (`param`, `session`, `application`).
+- Complete "Go to Definition" (F12) for local loop variables (`th:each`), local scoped variables (`th:with`), and parameterized fragment arguments (`th:fragment`), jumping straight to their declaration in the HTML template.
+- Support Go to Definition for root methods on selected objects (`*{isFirst()}`) in selection expressions.
+- Support Go to Definition from Spring controller `new ModelAndView("viewName")` and `setViewName("viewName")` to Thymeleaf templates.
+- Support bidirectional Go to Definition on `layout:fragment` between child templates and layout parent definitions.
 
 ## [0.7.0] - 2026-10-21
 
