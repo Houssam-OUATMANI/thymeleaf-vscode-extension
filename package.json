@@ -99,6 +99,11 @@
           "type": "boolean",
           "default": true,
           "description": "Report model properties that cannot be resolved from indexed controller and Java sources."
+        },
+        "thymeleaf.validation.undefinedVariables": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report variables that are not defined in the model or enclosing local scope."
         }
       }
     },

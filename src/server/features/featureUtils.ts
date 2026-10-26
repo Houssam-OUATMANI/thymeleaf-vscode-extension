@@ -172,6 +172,24 @@ export function findEnclosingLocalVariables(
           declarationOffset: attribute.valueStart + nameOffset
         });
       }
+    } else if (attribute.name === "th:fragment" || attribute.name === "layout:fragment") {
+      const match = /^\s*[\w$]+\s*\(([^)]*)\)/.exec(attribute.value);
+      if (match && match[1]) {
+        const params = match[1].split(",");
+        let cursor = attribute.value.indexOf("(") + 1;
+        for (const rawParam of params) {
+          const trimmed = rawParam.trim();
+          if (trimmed) {
+            const paramNameOffset = attribute.value.indexOf(trimmed, cursor);
+            variables.push({
+              name: trimmed,
+              typeName: "java.lang.Object",
+              declarationOffset: attribute.valueStart + (paramNameOffset >= 0 ? paramNameOffset : 0)
+            });
+            cursor = (paramNameOffset >= 0 ? paramNameOffset : cursor) + trimmed.length;
+          }
+        }
+      }
     }
   }
 
@@ -493,6 +511,15 @@ export const THYMELEAF_EXECUTION_OBJECTS: Record<
   }
 };
 
+export const KNOWN_WEB_IMPLICIT_VARS = new Set([
+  "param", "session", "application", "request", "response"
+]);
+
+export const SPEL_KEYWORDS = new Set([
+  "true", "false", "null", "empty", "and", "or", "not",
+  "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof", "matches", "this"
+]);
+
 export interface ResolvedModelPath {
   readonly typeName: string;
   readonly property: JavaProperty | undefined;
@@ -501,6 +528,10 @@ export interface ResolvedModelPath {
     readonly typeName: string;
     readonly offset: number;
   } | undefined;
+  readonly undefinedVariable?: {
+    readonly name: string;
+    readonly offset: number;
+  };
   readonly consumedLength: number;
 }
 
@@ -541,7 +572,22 @@ export function resolveModelPath(
     }
   }
 
-  if (!rawTypeName) return undefined;
+  if (!rawTypeName && prefix === "$" && KNOWN_WEB_IMPLICIT_VARS.has(rootName)) {
+    rawTypeName = "java.lang.Object";
+  }
+
+  if (!rawTypeName) {
+    if (prefix === "$" && !SPEL_KEYWORDS.has(rootName) && rootName !== "T") {
+      return {
+        typeName: "unknown",
+        property: undefined,
+        unresolved: undefined,
+        undefinedVariable: { name: rootName, offset: rootMatch.index },
+        consumedLength: chainOffset
+      };
+    }
+    return undefined;
+  }
 
   let currentTypeName: string = rawTypeName;
   let lastProperty: JavaProperty | undefined;

@@ -276,7 +276,8 @@ function normalizeSettings(value: unknown): ThymeleafSettings {
     validation: {
       unclosedExpressions: readBoolean(validationValue.unclosedExpressions, DEFAULT_SETTINGS.validation.unclosedExpressions),
       unknownAttributes: readBoolean(validationValue.unknownAttributes, DEFAULT_SETTINGS.validation.unknownAttributes),
-      unknownModelProperties: readBoolean(validationValue.unknownModelProperties, DEFAULT_SETTINGS.validation.unknownModelProperties)
+      unknownModelProperties: readBoolean(validationValue.unknownModelProperties, DEFAULT_SETTINGS.validation.unknownModelProperties),
+      undefinedVariables: readBoolean(validationValue.undefinedVariables, DEFAULT_SETTINGS.validation.undefinedVariables ?? true)
     }
   };
 }

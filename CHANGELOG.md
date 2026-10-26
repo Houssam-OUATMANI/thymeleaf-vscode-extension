@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Report undefined variables in Thymeleaf expressions (`undefined-variable` diagnostics) when variables are not declared in Spring controllers, `@ControllerAdvice`, `@thymesVar` directives, local loop/with scopes, Spring Beans, or built-in execution objects.
+- Add Quick Fixes for undefined variables: typo suggestions (`Did you mean '...'?`) using Levenshtein distance and quick action to add `<!--/*@thymesVar*/-->` directive.
+- Add configuration `thymeleaf.validation.undefinedVariables` (defaults to `true`).
+- Recognize parameterized fragment variables (`th:fragment="name(arg1, arg2)"` and `layout:fragment`) in enclosing local scope.
+- Recognize additional Thymeleaf execution objects (`#fields`, `#messages`, `#uris`, `#temporals`, `#locale`, `#ctx`, `#request`, `#response`, `#session`) and implicit servlet objects (`param`, `session`, `application`).
+
 ## [0.7.0] - 2026-10-21
 
 ### Added

@@ -2712,6 +2712,42 @@ test("supports Thymeleaf Layout Dialect layout:decorate and layout:fragment with
   }
 });
 
+test("validates undefined variables and provides quick fixes", async () => {
+  const fixture = await createFixture();
+  try {
+    const invalidTemplate = `<div th:text="\${nonExistentVar}"></div>
+<span th:text="\${usr.displayName}"></span>
+<p th:text="\${user.displayName}"></p>
+<div th:with="localA = 123"><span th:text="\${localA}"></span></div>
+<div th:fragment="card(title, icon)"><span th:text="\${title}"></span></div>
+<span th:text="\${param.query}"></span>
+<span th:text="\${#strings.toUpperCase(user.displayName)}"></span>`;
+
+    const doc = TextDocument.create(fixture.templateUri, "html", 1, invalidTemplate);
+    const diagnostics = validateDocument(doc, fixture.index, DEFAULT_SETTINGS);
+
+    const undefinedVarDiags = diagnostics.filter((d) => d.code === "undefined-variable");
+    assert.equal(undefinedVarDiags.length, 2, "Should report exactly 2 undefined variables: nonExistentVar and usr");
+    assert.ok(undefinedVarDiags.some((d) => d.message.includes("'nonExistentVar'")));
+    assert.ok(undefinedVarDiags.some((d) => d.message.includes("'usr'")));
+
+    // Quick fixes for 'usr' (which is close to 'user')
+    const usrDiag = undefinedVarDiags.find((d) => d.message.includes("'usr'"))!;
+    const actions = provideCodeActions(doc, usrDiag.range, [usrDiag], fixture.index);
+    assert.ok(actions.some((a) => a.title === "Replace with 'user'"), "Should suggest replacement with 'user'");
+    assert.ok(actions.some((a) => a.title.includes("@thymesVar id=\"usr\"")), "Should offer adding @thymesVar");
+
+    // Setting undefinedVariables=false disables these warnings
+    const disabledDiags = validateDocument(doc, fixture.index, {
+      ...DEFAULT_SETTINGS,
+      validation: { ...DEFAULT_SETTINGS.validation, undefinedVariables: false }
+    });
+    assert.equal(disabledDiags.filter((d) => d.code === "undefined-variable").length, 0);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;

@@ -17,8 +17,9 @@ import {
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
-import { normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
+import { findThymesVars, normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
 import {
+  findEnclosingLocalVariables,
   rangeAtOffset,
   resolveModelPath,
   routePath
@@ -32,6 +33,7 @@ export interface ThymeleafSettings {
     readonly unclosedExpressions: boolean;
     readonly unknownAttributes: boolean;
     readonly unknownModelProperties: boolean;
+    readonly undefinedVariables?: boolean;
   };
 }
 
@@ -40,7 +42,8 @@ export const DEFAULT_SETTINGS: ThymeleafSettings = {
   validation: {
     unclosedExpressions: true,
     unknownAttributes: true,
-    unknownModelProperties: true
+    unknownModelProperties: true,
+    undefinedVariables: true
   }
 };
 
@@ -218,8 +221,15 @@ export function validateDocument(
     }
   }
 
-  if (settings.validation.unknownModelProperties) {
-    diagnostics.push(...validateModelProperties(text, currentTemplateName, index, document.uri));
+  if (settings.validation.unknownModelProperties || settings.validation.undefinedVariables !== false) {
+    diagnostics.push(...validateModelProperties(
+      text,
+      currentTemplateName,
+      index,
+      document.uri,
+      settings.validation.undefinedVariables !== false,
+      settings.validation.unknownModelProperties !== false
+    ));
   }
   return diagnostics;
 }
@@ -295,6 +305,43 @@ export function provideCodeActions(
           }
         }
       });
+    } else if (diagnostic.code === "undefined-variable" && rangesOverlap(diagnostic.range, range)) {
+      const match = /Variable '([^']+)' is not defined/.exec(diagnostic.message);
+      if (match) {
+        const varName = match[1];
+        const currentTemplate = index.findTemplateByUri(document.uri);
+        const templateName = currentTemplate?.name ?? "";
+        const candidates: string[] = [
+          ...index.modelAttributesForTemplate(templateName, document.uri).keys(),
+          ...findThymesVars(document.getText()).map((v) => v.id),
+          ...findEnclosingLocalVariables(document.getText(), document.offsetAt(diagnostic.range.start), new Map(), index).map((v) => v.name)
+        ];
+        const suggestion = closestProperty(varName, candidates);
+        if (suggestion) {
+          actions.push({
+            title: `Replace with '${suggestion}'`,
+            kind: CodeActionKind.QuickFix,
+            diagnostics: [diagnostic],
+            edit: {
+              changes: {
+                [document.uri]: [TextEdit.replace(diagnostic.range, suggestion)]
+              }
+            }
+          });
+        }
+        actions.push({
+          title: `Add <!--/*@thymesVar id="${varName}" type="Object"*/--> directive`,
+          kind: CodeActionKind.QuickFix,
+          diagnostics: [diagnostic],
+          edit: {
+            changes: {
+              [document.uri]: [
+                TextEdit.insert(Position.create(0, 0), `<!--/*@thymesVar id="${varName}" type="Object"*/-->\n`)
+              ]
+            }
+          }
+        });
+      }
     } else if (diagnostic.code === "missing-template" && rangesOverlap(diagnostic.range, range)) {
       const match = /Template '([^']+)' was not found/.exec(diagnostic.message);
       if (match) {
@@ -471,7 +518,9 @@ function validateModelProperties(
   text: string,
   templateName: string,
   index: ProjectIndex,
-  templateUri: string
+  templateUri: string,
+  checkUndefinedVariables: boolean = true,
+  checkUnknownProperties: boolean = true
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const expressionsToCheck: { expression: ThymeleafExpression; baseOffset: number }[] = [];
@@ -501,16 +550,32 @@ function validateModelProperties(
         index,
         templateUri
       );
-      if (!resolved?.unresolved) continue;
-      const { name, typeName, offset } = resolved.unresolved;
-      const propertyOffset = baseOffset + expression.start + 2 + subOffset + offset;
-      diagnostics.push({
-        range: rangeAtOffset(text, propertyOffset, propertyOffset + name.length),
-        severity: DiagnosticSeverity.Warning,
-        code: "unknown-model-property",
-        source: "Thymeleaf",
-        message: `Property '${name}' was not found on model type '${typeName}'.`
-      });
+      if (checkUndefinedVariables && resolved?.undefinedVariable) {
+        const hasProjectControllers = index.controllerHandlers.length > 0;
+        const hasModelAttrs = index.modelAttributesForTemplate(templateName, templateUri).size > 0;
+        const hasThymesVars = findThymesVars(text).length > 0;
+        if (hasProjectControllers || hasModelAttrs || hasThymesVars) {
+          const { name, offset } = resolved.undefinedVariable;
+          const varOffset = baseOffset + expression.start + 2 + subOffset + offset;
+          diagnostics.push({
+            range: rangeAtOffset(text, varOffset, varOffset + name.length),
+            severity: DiagnosticSeverity.Warning,
+            code: "undefined-variable",
+            source: "Thymeleaf",
+            message: `Variable '${name}' is not defined in the model or enclosing scope.`
+          });
+        }
+      } else if (checkUnknownProperties && resolved?.unresolved) {
+        const { name, typeName, offset } = resolved.unresolved;
+        const propertyOffset = baseOffset + expression.start + 2 + subOffset + offset;
+        diagnostics.push({
+          range: rangeAtOffset(text, propertyOffset, propertyOffset + name.length),
+          severity: DiagnosticSeverity.Warning,
+          code: "unknown-model-property",
+          source: "Thymeleaf",
+          message: `Property '${name}' was not found on model type '${typeName}'.`
+        });
+      }
     }
   }
   return diagnostics;
@@ -525,23 +590,19 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
   const results: { subPath: string; offset: number }[] = [];
   const keywords = new Set([
     "true", "false", "null", "empty", "and", "or", "not",
-    "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof"
+    "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof", "matches", "T", "this"
   ]);
 
-  const pathRegex = /(?:[@#]|[a-zA-Z_$])[\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])+/g;
+  const pathRegex = /(?:^|[^.\w$])([@#a-zA-Z_$][\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])*)/g;
   for (const match of body.matchAll(pathRegex)) {
-    if (match.index === undefined) continue;
-    const pathStr = match[0];
-    const root = pathStr.split(/[.?[\]]/)[0]?.trim();
-    if (root && !keywords.has(root)) {
-      results.push({ subPath: pathStr, offset: match.index });
-    }
-  }
-
-  if (results.length === 0) {
-    const simpleMatch = /^\s*([@#a-zA-Z_$][\w$]*)/.exec(body);
-    if (simpleMatch && !keywords.has(simpleMatch[1])) {
-      results.push({ subPath: simpleMatch[1], offset: simpleMatch.index ?? 0 });
+    if (match.index === undefined || !match[1]) continue;
+    const fullMatch = match[0];
+    const pathStr = match[1].trim();
+    const leadingInMatch = fullMatch.indexOf(pathStr);
+    const offset = match.index + (leadingInMatch >= 0 ? leadingInMatch : 0);
+    const root = pathStr.split(/[.?[\]\s]/)[0]?.trim();
+    if (root && !keywords.has(root) && !/^\d+$/.test(root)) {
+      results.push({ subPath: pathStr, offset });
     }
   }
 
