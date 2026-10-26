@@ -16,6 +16,10 @@ All notable changes to this project are documented in this file.
 - Support Go to Definition from Spring controller `new ModelAndView("viewName")` and `setViewName("viewName")` to Thymeleaf templates.
 - Support bidirectional Go to Definition on `layout:fragment` between child templates and layout parent definitions.
 
+### Fixed
+
+- Prevent false-positive `undefined-variable` diagnostics on CSS class names and text in string literals (e.g., `'btn btn-outline'` inside ternary expressions).
+
 ## [0.7.0] - 2026-10-21
 
 ### Added

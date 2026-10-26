@@ -582,9 +582,10 @@ function validateModelProperties(
 }
 
 function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
-  if (/^[@#\w$]+(?:(?:\.|\?\.)[@#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(body.trim())) {
+  const trimmed = body.trim();
+  if (/^[@#\w$]+(?:(?:\.|\?\.)[@#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(trimmed)) {
     const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
-    return [{ subPath: body.trim(), offset: leadingSpaces }];
+    return [{ subPath: trimmed, offset: leadingSpaces }];
   }
 
   const results: { subPath: string; offset: number }[] = [];
@@ -593,8 +594,10 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
     "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof", "matches", "T", "this"
   ]);
 
+  const maskedBody = maskStringLiterals(body);
+
   const pathRegex = /(?:^|[^.\w$])([@#a-zA-Z_$][\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])*)/g;
-  for (const match of body.matchAll(pathRegex)) {
+  for (const match of maskedBody.matchAll(pathRegex)) {
     if (match.index === undefined || !match[1]) continue;
     const fullMatch = match[0];
     const pathStr = match[1].trim();
@@ -607,6 +610,46 @@ function extractSubPaths(body: string): { readonly subPath: string; readonly off
   }
 
   return results;
+}
+
+function maskStringLiterals(text: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+  const chars = text.split("");
+
+  for (let i = 0; i < chars.length; i += 1) {
+    const char = chars[i];
+    if (escaped) {
+      if (inSingleQuote || inDoubleQuote) {
+        chars[i] = " ";
+      }
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      if (inSingleQuote || inDoubleQuote) {
+        chars[i] = " ";
+      }
+      continue;
+    }
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      chars[i] = " ";
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      chars[i] = " ";
+      continue;
+    }
+    if (inSingleQuote || inDoubleQuote) {
+      chars[i] = " ";
+    }
+  }
+
+  return chars.join("");
 }
 
 function isKnownAttribute(name: string): boolean {

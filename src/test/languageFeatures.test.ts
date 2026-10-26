@@ -2743,6 +2743,12 @@ test("validates undefined variables and provides quick fixes", async () => {
       validation: { ...DEFAULT_SETTINGS.validation, undefinedVariables: false }
     });
     assert.equal(disabledDiags.filter((d) => d.code === "undefined-variable").length, 0);
+
+    // String literals like CSS classes must never be reported as undefined variables
+    const ternaryTemplate = `<a th:class="\${user != null ? 'btn btn-outline btn-info btn-active' : 'btn btn-outline btn-info'}"></a>`;
+    const ternaryDoc = TextDocument.create(fixture.templateUri, "html", 2, ternaryTemplate);
+    const ternaryDiags = validateDocument(ternaryDoc, fixture.index, DEFAULT_SETTINGS);
+    assert.deepEqual(ternaryDiags.filter((d) => d.code === "undefined-variable"), []);
   } finally {
     await fixture.dispose();
   }
