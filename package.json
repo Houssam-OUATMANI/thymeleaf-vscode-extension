@@ -132,9 +132,10 @@
   },
   "scripts": {
     "compile": "tsc -p . && node esbuild.config.cjs",
+    "compile:prod": "tsc -p . && node esbuild.config.cjs --production",
     "watch": "node esbuild.config.cjs --watch",
     "test": "npm run compile && node --test out/test/**/*.test.js",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile:prod"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
