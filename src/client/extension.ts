@@ -185,24 +185,98 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const doc = editor.document;
           const selectedHtml = doc.getText(range);
 
-          const replaceText = `<div th:replace="~{::${trimmedName}}"></div>`;
-          const fragmentDeclaration = `\n<div th:fragment="${trimmedName}">\n${selectedHtml}\n</div>\n`;
+          // Detect root tag from selection (or default to th:block)
+          const trimmedSelected = selectedHtml.trim();
+          const rootMatch = /^<([a-zA-Z][a-zA-Z0-9:-]*)\b[^>]*>/s.exec(trimmedSelected);
+          const rootTag = rootMatch ? rootMatch[1].toLowerCase() : "th:block";
+          const fragmentDeclaration = `\n<${rootTag} th:fragment="${trimmedName}">\n${selectedHtml}\n</${rootTag}>\n`;
 
-          const fullText = doc.getText();
-          const bodyCloseIndex = fullText.lastIndexOf("</body>");
+          const destinationChoice = await vscode.window.showQuickPick(
+            [
+              { label: "$(file) Current template (at bottom)", description: "Insert fragment at the end of the current file", target: "current" },
+              { label: "$(new-file) External template file...", description: "Extract into a separate template file (e.g. fragments/common)", target: "external" }
+            ],
+            { placeHolder: "Select where to extract the fragment" }
+          );
+          if (!destinationChoice) return;
 
-          await editor.edit((editBuilder) => {
-            editBuilder.replace(range, replaceText);
-            if (bodyCloseIndex >= 0) {
-              const insertPos = doc.positionAt(bodyCloseIndex);
-              editBuilder.insert(insertPos, fragmentDeclaration);
-            } else {
-              const lastPos = doc.positionAt(fullText.length);
-              editBuilder.insert(lastPos, fragmentDeclaration);
+          if (destinationChoice.target === "external") {
+            const externalTemplate = await vscode.window.showInputBox({
+              prompt: "Enter relative template path (e.g. fragments/common)",
+              placeHolder: "fragments/common"
+            });
+            if (!externalTemplate || !externalTemplate.trim()) return;
+            const normalizedTpl = externalTemplate.trim().replace(/\.html$/i, "").replaceAll("\\", "/").replace(/^\/+/, "");
+
+            let workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+            if (!workspaceFolder && vscode.workspace.workspaceFolders?.length) {
+              workspaceFolder = vscode.workspace.workspaceFolders[0];
             }
-          });
+            if (!workspaceFolder) {
+              vscode.window.showErrorMessage("No workspace folder found to save the external template.");
+              return;
+            }
 
-          vscode.window.showInformationMessage(`Fragment '${trimmedName}' extracted successfully.`);
+            const config = vscode.workspace.getConfiguration("thymeleaf", workspaceFolder.uri);
+            const locations: string[] = config.get("templateLocations") || ["src/main/resources/templates"];
+            const primaryLocation = locations[0] || "src/main/resources/templates";
+            const targetFilePath = path.resolve(workspaceFolder.uri.fsPath, primaryLocation, `${normalizedTpl}.html`);
+            const targetDir = path.dirname(targetFilePath);
+            await fs.promises.mkdir(targetDir, { recursive: true });
+
+            let fileExists = false;
+            let externalContent = "";
+            try {
+              externalContent = await fs.promises.readFile(targetFilePath, "utf8");
+              fileExists = true;
+            } catch {
+              fileExists = false;
+            }
+
+            if (fileExists) {
+              const bodyClose = externalContent.lastIndexOf("</body>");
+              if (bodyClose >= 0) {
+                externalContent = externalContent.slice(0, bodyClose) + fragmentDeclaration + externalContent.slice(bodyClose);
+              } else {
+                externalContent += "\n" + fragmentDeclaration;
+              }
+            } else {
+              externalContent = `<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>${path.basename(normalizedTpl)}</title>
+</head>
+<body>
+${fragmentDeclaration}
+</body>
+</html>
+`;
+            }
+            await fs.promises.writeFile(targetFilePath, externalContent, "utf8");
+
+            const replaceText = `<${rootTag} th:replace="~{${normalizedTpl} :: ${trimmedName}}"></${rootTag}>`;
+            await editor.edit((editBuilder) => {
+              editBuilder.replace(range, replaceText);
+            });
+            vscode.window.showInformationMessage(`Fragment '${trimmedName}' extracted to '${normalizedTpl}.html'.`);
+          } else {
+            const replaceText = `<${rootTag} th:replace="~{::${trimmedName}}"></${rootTag}>`;
+            const fullText = doc.getText();
+            const bodyCloseIndex = fullText.lastIndexOf("</body>");
+
+            await editor.edit((editBuilder) => {
+              editBuilder.replace(range, replaceText);
+              if (bodyCloseIndex >= 0) {
+                const insertPos = doc.positionAt(bodyCloseIndex);
+                editBuilder.insert(insertPos, fragmentDeclaration);
+              } else {
+                const lastPos = doc.positionAt(fullText.length);
+                editBuilder.insert(lastPos, fragmentDeclaration);
+              }
+            });
+            vscode.window.showInformationMessage(`Fragment '${trimmedName}' extracted successfully.`);
+          }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error);
           vscode.window.showErrorMessage(`Failed to extract fragment: ${message}`);

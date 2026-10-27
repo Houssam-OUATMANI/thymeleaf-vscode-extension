@@ -453,11 +453,14 @@ export function provideCodeActions(
     const selectedText = document.getText(range);
     if (selectedText.trim().length > 0) {
       const fragmentName = "extractedFragment";
-      const replaceText = `<div th:replace="~{::${fragmentName}}"></div>`;
+      const trimmedText = selectedText.trim();
+      const rootMatch = /^<([a-zA-Z][a-zA-Z0-9:-]*)\b[^>]*>/s.exec(trimmedText);
+      const rootTag = rootMatch ? rootMatch[1].toLowerCase() : "th:block";
+      const replaceText = `<${rootTag} th:replace="~{::${fragmentName}}"></${rootTag}>`;
       const fullText = document.getText();
       const bodyClose = fullText.lastIndexOf("</body>");
       const insertPos = bodyClose >= 0 ? document.positionAt(bodyClose) : document.positionAt(fullText.length);
-      const fragmentDef = `\n<div th:fragment="${fragmentName}">\n${selectedText}\n</div>\n`;
+      const fragmentDef = `\n<${rootTag} th:fragment="${fragmentName}">\n${selectedText}\n</${rootTag}>\n`;
 
       actions.push({
         title: "Thymeleaf: Extract Fragment",

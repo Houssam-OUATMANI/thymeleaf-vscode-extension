@@ -2234,6 +2234,7 @@ test("offers Extract Fragment refactoring code action on HTML selection", async 
 
     const replaceEdit = changes.find((c) => c.newText.includes('th:replace="~{::extractedFragment}"'));
     assert.ok(replaceEdit, "Expected replacement edit with th:replace");
+    assert.match(replaceEdit.newText, /<header\b/, "Should preserve original root tag instead of forcing a div");
 
     const fragmentEdit = changes.find((c) => c.newText.includes('th:fragment="extractedFragment"'));
     assert.ok(fragmentEdit, "Expected fragment declaration edit with th:fragment");
