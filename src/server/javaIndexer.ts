@@ -112,7 +112,19 @@ const REQUEST_MAPPINGS = new Set([
   "DeleteMapping"
 ]);
 
-export function indexJavaSources(sources: ReadonlyMap<string, string>): JavaSourceIndex {
+export interface ParsedJavaSource {
+  readonly classes: readonly JavaClass[];
+  readonly handlers: readonly ControllerHandler[];
+  readonly typeReferences: readonly JavaTypeReference[];
+  readonly globalModelAttributes: ReadonlyMap<string, string>;
+  readonly globalModelAttributePositions: ReadonlyMap<string, { readonly uri: string; readonly position: SourcePosition }>;
+  readonly springBeans: readonly SpringBeanInfo[];
+}
+
+export function indexJavaSources(
+  sources: ReadonlyMap<string, string>,
+  cache?: Map<string, { readonly content: string; readonly parsed: ParsedJavaSource }>
+): JavaSourceIndex {
   const classes: JavaClass[] = [];
   const handlers: ControllerHandler[] = [];
   const typeReferences: JavaTypeReference[] = [];
@@ -121,13 +133,25 @@ export function indexJavaSources(sources: ReadonlyMap<string, string>): JavaSour
   const springBeans: SpringBeanInfo[] = [];
 
   for (const [filePath, source] of sources) {
-    const parsed = parseJavaSource(filePath, source);
+    let cached = cache?.get(filePath);
+    if (!cached || cached.content !== source) {
+      const newlyParsed = parseJavaSource(filePath, source);
+      cached = { content: source, parsed: newlyParsed };
+      cache?.set(filePath, cached);
+    }
+    const parsed = cached.parsed;
     classes.push(...parsed.classes);
     handlers.push(...parsed.handlers);
     typeReferences.push(...parsed.typeReferences);
     for (const [name, type] of parsed.globalModelAttributes) globalModelAttributes.set(name, type);
     for (const [name, pos] of parsed.globalModelAttributePositions) globalModelAttributePositions.set(name, pos);
     springBeans.push(...parsed.springBeans);
+  }
+
+  if (cache) {
+    for (const key of cache.keys()) {
+      if (!sources.has(key)) cache.delete(key);
+    }
   }
 
   const classesByName = new Map<string, JavaClass>();

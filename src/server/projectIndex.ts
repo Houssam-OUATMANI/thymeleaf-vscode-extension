@@ -9,6 +9,7 @@ import {
   JavaMethodSignature,
   JavaProperty,
   JavaTypeReference,
+  ParsedJavaSource,
   SourcePosition,
   SpringBeanInfo,
   substituteTypeParameters
@@ -94,6 +95,9 @@ export class ProjectIndex {
   private globalModelAttributes = new Map<string, string>();
   private globalModelAttributePositions = new Map<string, { readonly uri: string; readonly position: SourcePosition }>();
   private springBeansByName = new Map<string, SpringBeanInfo>();
+  private javaSourceCache = new Map<string, { readonly content: string; readonly parsed: ParsedJavaSource }>();
+  private templateCache = new Map<string, { readonly content: string; readonly template: IndexedTemplate }>();
+  private propertiesCache = new Map<string, { readonly content: string; readonly properties: readonly IndexedMessageProperty[] }>();
 
   public get templates(): readonly IndexedTemplate[] {
     return [...this.templateByUri.values()].map((template) =>
@@ -239,7 +243,12 @@ export class ProjectIndex {
       for (const propertyFile of propertyFiles) {
         const fileUri = pathToFileURL(propertyFile).toString();
         const content = await readContent(propertyFile, normalizedOpenDocuments);
-        for (const item of parsePropertiesFile(content, fileUri)) {
+        let cached = this.propertiesCache.get(propertyFile);
+        if (!cached || cached.content !== content) {
+          cached = { content, properties: parsePropertiesFile(content, fileUri) };
+          this.propertiesCache.set(propertyFile, cached);
+        }
+        for (const item of cached.properties) {
           const list = messagesByKey.get(item.key) ?? [];
           list.push(item);
           messagesByKey.set(item.key, list);
@@ -255,13 +264,21 @@ export class ProjectIndex {
         for (const templatePath of await findFiles(templateRoot, ".html")) {
           const content = await readContent(templatePath, normalizedOpenDocuments);
           const name = toPosix(path.relative(templateRoot, templatePath)).replace(/\.html$/i, "");
-          const template: IndexedTemplate = {
-            name,
-            uri: pathToFileURL(templatePath).toString(),
-            fragments: findFragments(content),
-            thymesVars: findThymesVars(content),
-            content
-          };
+          let cached = this.templateCache.get(templatePath);
+          if (!cached || cached.content !== content) {
+            cached = {
+              content,
+              template: {
+                name,
+                uri: pathToFileURL(templatePath).toString(),
+                fragments: findFragments(content),
+                thymesVars: findThymesVars(content),
+                content
+              }
+            };
+            this.templateCache.set(templatePath, cached);
+          }
+          const template = cached.template;
           if (!ambiguousTemplateNames.has(name) && templateByName.has(name)) {
             templateByName.delete(name);
             ambiguousTemplateNames.add(name);
@@ -285,7 +302,7 @@ export class ProjectIndex {
       }
     }
 
-    const javaIndexes = javaSourcesByWorkspace.map((javaSources) => indexJavaSources(javaSources));
+    const javaIndexes = javaSourcesByWorkspace.map((javaSources) => indexJavaSources(javaSources, this.javaSourceCache));
     const javaClasses = javaIndexes.flatMap(({ classes }) => classes);
     const classesByName = new Map<string, JavaClass>();
     const ambiguousClassNames = new Set<string>();

@@ -162,6 +162,52 @@ export function findInlineExpressions(text: string): InlineExpression[] {
   return inlines;
 }
 
+export interface UnclosedSubstitution extends UnclosedExpression {
+  readonly isLiteral?: boolean;
+}
+
+export function findUnclosedLiteralSubstitutions(text: string): UnclosedSubstitution[] {
+  const unclosed: UnclosedSubstitution[] = [];
+  for (const attribute of findThymeleafAttributes(text)) {
+    const val = attribute.value;
+    let inPipe = false;
+    let pipeStart = -1;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let escaped = false;
+    for (let i = 0; i < val.length; i += 1) {
+      const c = val[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (c === "'" && !inDoubleQuote) inSingleQuote = !inSingleQuote;
+      else if (c === '"' && !inSingleQuote) inDoubleQuote = !inDoubleQuote;
+      else if (c === "|" && !inSingleQuote && !inDoubleQuote) {
+        if (!inPipe) {
+          inPipe = true;
+          pipeStart = i;
+        } else {
+          inPipe = false;
+          pipeStart = -1;
+        }
+      }
+    }
+    if (inPipe && pipeStart >= 0) {
+      unclosed.push({
+        start: attribute.valueStart + pipeStart,
+        end: attribute.valueStart + val.length,
+        isLiteral: true
+      });
+    }
+  }
+  return unclosed;
+}
+
 export function findUnclosedInlineExpressions(text: string): UnclosedExpression[] {
   const unclosed: UnclosedExpression[] = [];
   let index = 0;

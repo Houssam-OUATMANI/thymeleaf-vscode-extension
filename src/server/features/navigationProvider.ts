@@ -5,6 +5,11 @@ import {
   TextDocument
 } from "vscode-languageserver/node";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
+import { THYMELEAF_ATTRIBUTES, ThymeleafAttribute } from "../../thymeleaf/attributes";
+
+const ATTRIBUTE_BY_NAME = new Map<string, ThymeleafAttribute>(
+  THYMELEAF_ATTRIBUTES.map((attr) => [attr.name, attr])
+);
 import {
   findInlineExpressions,
   findThymeleafExpressions,
@@ -191,6 +196,39 @@ export function provideHover(
   const offset = document.offsetAt(position);
   const template = index.findTemplateByUri(document.uri);
   if (!template) return undefined;
+
+  for (const attr of findThymeleafAttributes(text)) {
+    if (offset >= attr.nameStart && offset <= attr.nameEnd) {
+      const known = ATTRIBUTE_BY_NAME.get(attr.name);
+      if (known) {
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**${attr.sourceName}**\n\n${known.description}\n\n*Syntax:* \`${attr.sourceName}="${known.value}"\``
+          },
+          range: rangeAtOffset(text, attr.nameStart, attr.nameEnd)
+        };
+      }
+      if (attr.name.startsWith("sec:") || attr.name.startsWith("layout:")) {
+        const desc = attr.name === "layout:decorate" || attr.name === "layout:decorator"
+          ? "Specifies the layout template to decorate using the Thymeleaf Layout Dialect."
+          : attr.name === "layout:fragment"
+            ? "Defines a layout fragment placeholder or implementation."
+            : attr.name === "sec:authorize"
+              ? "Evaluates a Spring Security authorization expression (e.g. `hasRole('ADMIN')`, `isAuthenticated()`)."
+              : attr.name === "sec:authentication"
+                ? "Extracts details from the current Spring Security Authentication object (e.g. `name`, `principal.username`)."
+                : `Thymeleaf dialect attribute \`${attr.name}\`.`;
+        return {
+          contents: {
+            kind: "markdown",
+            value: `**${attr.sourceName}**\n\n${desc}`
+          },
+          range: rangeAtOffset(text, attr.nameStart, attr.nameEnd)
+        };
+      }
+    }
+  }
 
   const method = findModelMethodAt(text, offset, template.name, index, document.uri);
   if (method) {

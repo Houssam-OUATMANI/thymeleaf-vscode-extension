@@ -7,6 +7,26 @@
       "match": "\\b(?:data-th-|(?:th|sec|layout):)[a-zA-Z][\\w-]*(?=\\s*=)"
     },
     {
+      "name": "string.quoted.other.literal-substitution.thymeleaf",
+      "begin": "\\|",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.thymeleaf"
+        }
+      },
+      "end": "\\|",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.thymeleaf"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
+    },
+    {
       "name": "meta.embedded.inline.thymeleaf",
       "begin": "(\\[\\[|\\[\\()",
       "beginCaptures": {

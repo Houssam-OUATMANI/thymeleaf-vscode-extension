@@ -14,6 +14,7 @@ import {
   findThymeleafExpressions,
   findUnclosedAttributeExpressions,
   findUnclosedInlineExpressions,
+  findUnclosedLiteralSubstitutions,
   maskStringLiterals,
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
@@ -59,15 +60,19 @@ export function validateDocument(
   if (settings.validation.unclosedExpressions) {
     const unclosed = [
       ...findUnclosedAttributeExpressions(text),
-      ...findUnclosedInlineExpressions(text)
+      ...findUnclosedInlineExpressions(text),
+      ...findUnclosedLiteralSubstitutions(text)
     ];
-    for (const { start, end } of unclosed) {
+    for (const item of unclosed) {
+      const isLiteral = "isLiteral" in item && Boolean(item.isLiteral);
       diagnostics.push({
-        range: rangeAtOffset(text, start, end),
+        range: rangeAtOffset(text, item.start, item.end),
         severity: DiagnosticSeverity.Error,
-        code: "unclosed-expression",
+        code: isLiteral ? "unclosed-literal-substitution" : "unclosed-expression",
         source: "Thymeleaf",
-        message: "Thymeleaf expression is missing a closing brace."
+        message: isLiteral
+          ? "Thymeleaf literal substitution is missing a closing '|'."
+          : "Thymeleaf expression is missing a closing brace."
       });
     }
   }
@@ -259,6 +264,17 @@ export function provideCodeActions(
         edit: {
           changes: {
             [document.uri]: [TextEdit.insert(diagnostic.range.end, "}")]
+          }
+        }
+      });
+    } else if (diagnostic.code === "unclosed-literal-substitution") {
+      actions.push({
+        title: "Insert missing closing '|'",
+        kind: CodeActionKind.QuickFix,
+        diagnostics: [diagnostic],
+        edit: {
+          changes: {
+            [document.uri]: [TextEdit.insert(diagnostic.range.end, "|")]
           }
         }
       });

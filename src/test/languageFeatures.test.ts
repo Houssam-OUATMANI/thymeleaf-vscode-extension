@@ -2897,6 +2897,133 @@ class ItemController {
   }
 });
 
+test("provides hover documentation on Thymeleaf and dialect attributes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-hover-attr-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "hover.html");
+
+  const templateContent = `<div th:each="item : \${items}">
+  <span th:text="\${item}"></span>
+  <p sec:authorize="hasRole('ADMIN')">Admin</p>
+</div>`;
+
+  try {
+    await mkdir(templates, { recursive: true });
+    await writeFile(templatePath, templateContent);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+
+    // 1. Hover on th:each
+    const eachOffset = templateContent.indexOf("th:each") + 2;
+    const eachHover = provideHover(doc, doc.positionAt(eachOffset), index);
+    assert.ok(eachHover, "Hover on th:each should be returned");
+    assert.ok(eachHover?.contents.value.includes("Iterate over a collection"), "Description of th:each should be in hover");
+
+    // 2. Hover on th:text
+    const textOffset = templateContent.indexOf("th:text") + 2;
+    const textHover = provideHover(doc, doc.positionAt(textOffset), index);
+    assert.ok(textHover, "Hover on th:text should be returned");
+    assert.ok(textHover?.contents.value.includes("Set escaped element text"), "Description of th:text should be in hover");
+
+    // 3. Hover on sec:authorize
+    const secOffset = templateContent.indexOf("sec:authorize") + 2;
+    const secHover = provideHover(doc, doc.positionAt(secOffset), index);
+    assert.ok(secHover, "Hover on sec:authorize should be returned");
+    assert.ok(secHover?.contents.value.includes("Spring Security authorization expression"), "sec:authorize hover should be returned");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("supports literal substitutions |...| with validation and quick fixes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-literal-sub-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "sub.html");
+
+  // Valid literal substitution and an unclosed literal substitution
+  const validContent = `<span th:text="|Hello \${name}!|"></span>`;
+  const invalidContent = `<span th:text="|Hello \${name}"></span>`;
+
+  try {
+    await mkdir(templates, { recursive: true });
+    await writeFile(templatePath, validContent);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // 1. Valid literal substitution should have no unclosed diagnostics
+    const validDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, validContent);
+    const validDiags = validateDocument(validDoc, index, DEFAULT_SETTINGS);
+    const unclosedPipesValid = validDiags.filter((d) => d.code === "unclosed-literal-substitution");
+    assert.equal(unclosedPipesValid.length, 0, "No unclosed pipe diagnostic expected for valid syntax");
+
+    // 2. Unclosed literal substitution should report error
+    const invalidDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, invalidContent);
+    const invalidDiags = validateDocument(invalidDoc, index, DEFAULT_SETTINGS);
+    const unclosedPipesInvalid = invalidDiags.filter((d) => d.code === "unclosed-literal-substitution");
+    assert.equal(unclosedPipesInvalid.length, 1, "Expected 1 unclosed-literal-substitution diagnostic");
+    assert.ok(unclosedPipesInvalid[0].message.includes("missing a closing '|'"));
+
+    // 3. Quick Fix should propose inserting missing '|'
+    const actions = provideCodeActions(invalidDoc, unclosedPipesInvalid[0].range, unclosedPipesInvalid, index);
+    const insertPipeFix = actions.find((a) => a.title.includes("Insert missing closing '|'"));
+    assert.ok(insertPipeFix, "Quick fix to insert missing '|' should be offered");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("uses incremental caching across index refreshes for faster processing", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-cache-test-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "index.html");
+  const javaPath = path.join(java, "HomeController.java");
+
+  const templateContent = `<div th:text="\${title}">Home</div>`;
+  const javaContent = `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+class HomeController {
+  @GetMapping("/")
+  String home(Model model) {
+    model.addAttribute("title", "My Home");
+    return "index";
+  }
+}`;
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, templateContent),
+      writeFile(javaPath, javaContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const initialHandlers = index.controllerHandlers;
+    assert.equal(initialHandlers.length, 1);
+
+    // Second refresh with unchanged files: caches should be utilized seamlessly
+    await index.refresh([pathToFileURL(root).toString()]);
+    assert.equal(index.controllerHandlers.length, 1);
+    assert.equal(index.templates.length, 1);
+    assert.equal(index.findTemplate("index")?.name, "index");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;
