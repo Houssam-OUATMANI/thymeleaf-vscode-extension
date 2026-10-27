@@ -79,6 +79,7 @@ Screenshots are hosted in the repository and are not included in the extension p
 - Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members in attributes and inline expressions.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 - Support for both standard `th:*` attributes and their HTML5 `data-th-*` equivalents, including completion, navigation, diagnostics, and syntax highlighting.
+- Spring Security dialect attribute completion and hover documentation for `sec:authorize`, `sec:authorize-expr`, `sec:authorize-url`, `sec:authorize-acl`, and `sec:authentication`, including syntax highlighting and `data-sec-*` names.
 
 ## Requirements
 

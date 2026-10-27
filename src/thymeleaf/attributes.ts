@@ -107,3 +107,84 @@ export const THYMELEAF_ATTRIBUTES: readonly ThymeleafAttribute[] = [
   { name: "th:switch", description: "Select a case based on an expression.", value: "${expression}" },
   { name: "th:errors", description: "Render validation errors for a field.", value: "field" }
 ];
+
+export interface SecurityAttribute {
+  readonly name: string;
+  readonly description: string;
+  readonly value: string;
+}
+
+export const SEC_ATTRIBUTES: readonly SecurityAttribute[] = [
+  {
+    name: "sec:authorize",
+    description:
+      "Renders the element only if the Spring Security authorization expression (SpEL) evaluates to true.\n\n" +
+      "**Examples**: hasRole('ROLE_ADMIN'), isAuthenticated(), hasAnyRole('ROLE_USER','ROLE_ADMIN')",
+    value: "hasRole('ROLE_USER')",
+  },
+  {
+    name: "sec:authorize-expr",
+    description:
+      "Evaluates the Spring Security SpEL authorization expression and renders the element only when it is true.\n\n" +
+      "**Examples**: hasRole('ROLE_ADMIN'), hasAuthority('SCOPE_read')",
+    value: "hasRole('ROLE_ADMIN')",
+  },
+  {
+    name: "sec:authorize-url",
+    description:
+      "Renders the element only if the current user is authorized to access the given URL (uses Spring Security web security rules).\n\n" +
+      "**Example**: sec:authorize-url=\"/admin\"",
+    value: "/admin",
+  },
+  {
+    name: "sec:authorize-acl",
+    description:
+      "Renders the element only if the current user has the specified ACL permission on the given domain object.\n\n" +
+    "**Format**: domainObject :: permission - e.g. sec:authorize-acl=\"${report} :: 'WRITE'\"",
+    value: "${object} :: 'WRITE'",
+  },
+  {
+    name: "sec:authentication",
+    description:
+      "Outputs a property of the current Spring Security Authentication object.\n\n" +
+      "**Common values**: name, principal, principal.username, authorities, credentials, details",
+    value: "name",
+  },
+];
+
+/** SpEL expression snippets offered as value completions inside sec:authorize / sec:authorize-expr. */
+export const SEC_AUTHORIZE_SNIPPETS: ReadonlyArray<{ label: string; snippet: string; detail: string }> = [
+  { label: "hasRole()",              snippet: "hasRole('${1:ADMIN}')",                         detail: "User has a specific role" },
+  { label: "hasAnyRole()",           snippet: "hasAnyRole('${1:USER}', '${2:ADMIN}')",         detail: "User has any of the listed roles" },
+  { label: "hasAuthority()",         snippet: "hasAuthority('${1:SCOPE_read}')",              detail: "User has a specific authority/scope" },
+  { label: "hasAnyAuthority()",      snippet: "hasAnyAuthority('${1:SCOPE_read}', '${2:SCOPE_write}')", detail: "User has any of the listed authorities" },
+  { label: "hasPermission()",        snippet: "hasPermission(${1:object}, '${2:read}')",       detail: "User has a permission on an object" },
+  { label: "hasIpAddress()",         snippet: "hasIpAddress('${1:192.168.1.0/24}')",           detail: "Request comes from the given IP address or range" },
+  { label: "isAuthenticated()",      snippet: "isAuthenticated()",                              detail: "User is authenticated (not anonymous)" },
+  { label: "isAnonymous()",          snippet: "isAnonymous()",                                  detail: "User is anonymous (not logged in)" },
+  { label: "isFullyAuthenticated()", snippet: "isFullyAuthenticated()",                         detail: "User is fully authenticated (not remember-me)" },
+  { label: "isRememberMe()",         snippet: "isRememberMe()",                                 detail: "User authenticated via remember-me" },
+  { label: "permitAll()",            snippet: "permitAll()",                                    detail: "Always true - allows all users" },
+  { label: "denyAll()",              snippet: "denyAll()",                                     detail: "Always false - denies all users" },
+  { label: "principal.username",     snippet: "principal.username == '${1:admin}'",             detail: "Match by principal username" },
+];
+
+export const SEC_AUTHENTICATION_VALUES: ReadonlyArray<{ label: string; detail: string }> = [
+  { label: "name", detail: "Name of the authenticated principal" },
+  { label: "principal", detail: "The authenticated principal object" },
+  { label: "principal.username", detail: "Username of the authenticated principal" },
+  { label: "authorities", detail: "Authorities granted to the current user" },
+  { label: "credentials", detail: "Credentials of the current authentication" },
+  { label: "details", detail: "Additional authentication details" }
+];
+
+export const SEC_AUTHORIZE_URL_VALUES: ReadonlyArray<{ label: string; detail: string }> = [
+  { label: "/admin", detail: "Check access to the /admin URL" },
+  { label: "GET /admin", detail: "Check access to /admin for GET requests" },
+  { label: "POST /admin", detail: "Check access to /admin for POST requests" }
+];
+
+export const SEC_AUTHORIZE_ACL_VALUES: ReadonlyArray<{ label: string; detail: string }> = [
+  { label: "${object} :: 'READ'", detail: "Check READ permission on a domain object" },
+  { label: "${object} :: 'WRITE'", detail: "Check WRITE permission on a domain object" }
+];

@@ -8,7 +8,14 @@ import {
   TextDocument,
   TextEdit
 } from "vscode-languageserver/node";
-import { THYMELEAF_ATTRIBUTES } from "../../thymeleaf/attributes";
+import {
+  SEC_ATTRIBUTES,
+  SEC_AUTHENTICATION_VALUES,
+  SEC_AUTHORIZE_ACL_VALUES,
+  SEC_AUTHORIZE_SNIPPETS,
+  SEC_AUTHORIZE_URL_VALUES,
+  THYMELEAF_ATTRIBUTES
+} from "../../thymeleaf/attributes";
 import {
   getHtmlAttributesForTag,
   TAG_SPECIFIC_HTML_ATTRIBUTES
@@ -270,6 +277,44 @@ export function provideCompletions(
     return prioritizeThymeleaf(items);
   }
 
+  if (isInsideTag(text, offset) && isInsideAttributeValue(text, offset)) {
+    const secAttribute = findSecAttributeValueContext(text, offset);
+    if (secAttribute === "sec:authorize" || secAttribute === "sec:authorize-expr") {
+      return SEC_AUTHORIZE_SNIPPETS.map(({ label, snippet, detail }) => ({
+        label,
+        kind: CompletionItemKind.Value,
+        detail,
+        insertText: snippet,
+        insertTextFormat: 2,
+        sortText: `0000_0_${label}`
+      }));
+    }
+    if (secAttribute === "sec:authentication") {
+      return SEC_AUTHENTICATION_VALUES.map(({ label, detail }) => ({
+        label,
+        kind: CompletionItemKind.Value,
+        detail,
+        sortText: `0000_0_${label}`
+      }));
+    }
+    if (secAttribute === "sec:authorize-url") {
+      return SEC_AUTHORIZE_URL_VALUES.map(({ label, detail }) => ({
+        label,
+        kind: CompletionItemKind.Value,
+        detail,
+        sortText: `0000_0_${label}`
+      }));
+    }
+    if (secAttribute === "sec:authorize-acl") {
+      return SEC_AUTHORIZE_ACL_VALUES.map(({ label, detail }) => ({
+        label,
+        kind: CompletionItemKind.Value,
+        detail,
+        sortText: `0000_0_${label}`
+      }));
+    }
+  }
+
   if (isInsideTag(text, offset) && !isInsideAttributeValue(text, offset)) {
     const attributeContext = findAttributeNameContext(text, offset);
     if (!attributeContext) return [];
@@ -277,11 +322,16 @@ export function provideCompletions(
     const { tagName, prefix, startOffset } = attributeContext;
     const lowerPrefix = prefix.toLowerCase();
     const isDataTh = lowerPrefix.startsWith("data-th-");
+    const isDataSec = lowerPrefix.startsWith("data-sec-");
     const isTh = lowerPrefix.startsWith("th:");
+    const isSec = lowerPrefix.startsWith("sec:") || isDataSec;
     const items: CompletionItem[] = [];
 
     const thPrefix = isDataTh
       ? `th:${lowerPrefix.slice("data-th-".length)}`
+      : lowerPrefix;
+    const secPrefix = isDataSec
+      ? `sec:${lowerPrefix.slice("data-sec-".length)}`
       : lowerPrefix;
 
     for (const { name, description, value } of THYMELEAF_ATTRIBUTES) {
@@ -314,7 +364,30 @@ export function provideCompletions(
       }
     }
 
-    if (!isTh && !isDataTh) {
+    // sec: attribute name completions
+    if (isSec) {
+      for (const { name, description, value } of SEC_ATTRIBUTES) {
+      if (name.toLowerCase().startsWith(secPrefix)) {
+        const completionName = isDataSec
+          ? `data-sec-${name.slice("sec:".length)}`
+          : name;
+        items.push({
+          label: completionName,
+          kind: CompletionItemKind.Property,
+          detail: value,
+          documentation: description,
+          textEdit: TextEdit.replace(
+            Range.create(document.positionAt(startOffset), position),
+            `${completionName}="$1"`
+          ),
+          insertTextFormat: 2,
+          sortText: `0000_0_${completionName}`
+        });
+      }
+    }
+    }
+
+    if (!isTh && !isDataTh && !isSec) {
       const htmlAttributes = getHtmlAttributesForTag(tagName);
       const specificAttributes = TAG_SPECIFIC_HTML_ATTRIBUTES[tagName] ?? [];
       const specificNames = new Set(specificAttributes.map((a) => a.name));
@@ -518,4 +591,38 @@ function findMessageKeyContext(linePrefix: string): string | undefined {
   const keyPrefix = linePrefix.slice(marker + 2);
   if (keyPrefix.includes("}") || keyPrefix.includes("(")) return undefined;
   return keyPrefix.trim();
+}
+
+/**
+ * Returns the Spring Security attribute whose value contains the cursor.
+ */
+function findSecAttributeValueContext(text: string, offset: number): string | undefined {
+  const tagStart = text.lastIndexOf("<", offset);
+  if (tagStart < 0) return undefined;
+
+  let quote: "'" | '"' | undefined;
+  let attributeName: string | undefined;
+  for (let index = tagStart + 1; index < offset; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === quote && text[index - 1] !== "\\") {
+        quote = undefined;
+        attributeName = undefined;
+      }
+    } else if (character === "'" || character === '"') {
+      quote = character;
+    } else if (character === "=") {
+      let nameEnd = index;
+      while (nameEnd > tagStart && /\s/.test(text[nameEnd - 1])) nameEnd -= 1;
+      let nameStart = nameEnd;
+      while (nameStart > tagStart && /[\w:-]/.test(text[nameStart - 1])) nameStart -= 1;
+      attributeName = text.slice(nameStart, nameEnd).toLowerCase();
+    }
+  }
+
+  if (!quote || !attributeName) return undefined;
+  if (attributeName.startsWith("data-sec-")) {
+    return `sec:${attributeName.slice("data-sec-".length)}`;
+  }
+  return attributeName.startsWith("sec:") ? attributeName : undefined;
 }

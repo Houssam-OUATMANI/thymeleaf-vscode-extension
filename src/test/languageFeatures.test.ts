@@ -2939,6 +2939,66 @@ test("provides hover documentation on Thymeleaf and dialect attributes", async (
   }
 });
 
+test("completes Spring Security dialect attributes and their values", async () => {
+  const fixture = await createFixture();
+  try {
+    for (const [text, expected] of [
+      ["<div sec:auth", "sec:authorize"],
+      ["<div data-sec-auth", "data-sec-authorize"]
+    ] as const) {
+      const doc = TextDocument.create(fixture.templateUri, "html", 1, text);
+      const completions = provideCompletions(doc, doc.positionAt(text.length), fixture.index);
+      assert.ok(completions.some(({ label }) => label === expected));
+      if (text.startsWith("<div sec:")) {
+        for (const name of [
+          "sec:authorize",
+          "sec:authorize-expr",
+          "sec:authorize-url",
+          "sec:authorize-acl",
+          "sec:authentication"
+        ]) {
+          assert.ok(completions.some(({ label }) => label === name), `Expected ${name} completion`);
+        }
+      }
+    }
+
+    const authorizeText = `<div sec:authorize="hasRole('ADMIN')"></div>`;
+    const authorizeDoc = TextDocument.create(fixture.templateUri, "html", 1, authorizeText);
+    const authorizeOffset = authorizeText.indexOf("ADMIN") + "ADMIN".length;
+    const authorizeCompletions = provideCompletions(
+      authorizeDoc,
+      authorizeDoc.positionAt(authorizeOffset),
+      fixture.index
+    );
+    assert.ok(authorizeCompletions.some(({ label }) => label === "hasRole()"));
+    assert.ok(authorizeCompletions.some(({ label }) => label === "hasPermission()"));
+
+    const authenticationText = `<span data-sec-authentication="pri"></span>`;
+    const authenticationDoc = TextDocument.create(fixture.templateUri, "html", 1, authenticationText);
+    const authenticationOffset = authenticationText.indexOf("pri") + "pri".length;
+    const authenticationCompletions = provideCompletions(
+      authenticationDoc,
+      authenticationDoc.positionAt(authenticationOffset),
+      fixture.index
+    );
+    assert.ok(authenticationCompletions.some(({ label }) => label === "principal.username"));
+
+    const urlText = `<div sec:authorize-url=""></div>`;
+    const urlDoc = TextDocument.create(fixture.templateUri, "html", 1, urlText);
+    const urlOffset = urlText.indexOf('=""') + 2;
+    const urlCompletions = provideCompletions(urlDoc, urlDoc.positionAt(urlOffset), fixture.index);
+    assert.ok(urlCompletions.some(({ label }) => label === "GET /admin"));
+
+    const aclText = `<div sec:authorize-acl=""></div>`;
+    const aclDoc = TextDocument.create(fixture.templateUri, "html", 1, aclText);
+    const aclOffset = aclText.indexOf('=""') + 2;
+    const aclCompletions = provideCompletions(aclDoc, aclDoc.positionAt(aclOffset), fixture.index);
+    assert.ok(aclCompletions.some(({ label }) => label === "${object} :: 'READ'"));
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("supports literal substitutions |...| with validation and quick fixes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-literal-sub-"));
   const templates = path.join(root, "src", "main", "resources", "templates");

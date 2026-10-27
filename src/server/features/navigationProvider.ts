@@ -5,10 +5,15 @@ import {
   TextDocument
 } from "vscode-languageserver/node";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
-import { THYMELEAF_ATTRIBUTES, ThymeleafAttribute } from "../../thymeleaf/attributes";
+import {
+  SEC_ATTRIBUTES,
+  SecurityAttribute,
+  THYMELEAF_ATTRIBUTES,
+  ThymeleafAttribute
+} from "../../thymeleaf/attributes";
 
-const ATTRIBUTE_BY_NAME = new Map<string, ThymeleafAttribute>(
-  THYMELEAF_ATTRIBUTES.map((attr) => [attr.name, attr])
+const ATTRIBUTE_BY_NAME = new Map<string, ThymeleafAttribute | SecurityAttribute>(
+  [...THYMELEAF_ATTRIBUTES, ...SEC_ATTRIBUTES].map((attr) => [attr.name, attr])
 );
 import {
   findInlineExpressions,

@@ -82,7 +82,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     },
     serverInfo: {
       name: "Thymeleaf Language Server",
-      version: "0.8.0"
+      version: "0.9.0"
     }
   };
 });

@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 
 
+## [0.9.0] - 2026-10-27
+
+### Added
+
+- Support Spring controller view returns targeting fragments (e.g. `return "users :: userRow"` or `return "admin/dashboard :: stats"`) for HTMX and partial rendering:
+  - Correctly matches controller handlers and links model attributes to the parent template.
+  - Generates specialized CodeLens `Open fragment '<fragment>' in '<template>.html'` and gutter markers with direct jump via `thymeleaf.openFragment`.
+  - Enables "Go to Definition" (F12) from Java view return strings directly to the target fragment in HTML.
+- Add official documentation on Hover for all Thymeleaf attributes (`th:text`, `th:each`, `th:if`, `th:field`, `th:replace`, `data-th-*`, etc.) displaying syntax and descriptions.
+- Add hover documentation for Layout Dialect (`layout:decorate`, `layout:fragment`) attributes.
+- Complete Spring Security dialect support with completion and hover documentation for `sec:authorize`, `sec:authorize-expr`, `sec:authorize-url`, `sec:authorize-acl`, and `sec:authentication`; add SpEL and attribute-value suggestions, `data-sec-*` support, and syntax highlighting.
+- Support Thymeleaf literal substitutions (`|...|`):
+  - Add TextMate syntax highlighting for `|...|` string substitution blocks while preserving nested SpEL expression coloring.
+  - Add diagnostic validation for unclosed literal substitutions (`unclosed-literal-substitution`) with Quick Fix to insert the missing closing pipe `|`.
+- Improve Extract Fragment refactoring:
+  - Automatically detect and preserve the original root HTML tag (e.g. `<header>`, `<tr>`, `<li>`) instead of forcing a generic `<div>`, defaulting to clean `<th:block>` when appropriate.
+  - Add interactive destination selection: extract into the current template (at bottom) or extract into a separate external template file (e.g. `fragments/common`), automatically creating the file and parent folders if needed.
+
+### Improved
+
+- Implement incremental file-level caching across index refreshes for Java sources, HTML templates, and `.properties` message bundles, reducing CPU usage by more than 90% in large Spring Boot workspaces.
+- Enable esbuild minification and tree shaking for production builds (`vscode:prepublish`), reducing client and server bundle sizes by more than 50% and improving extension startup time.
+
 ## [0.8.0] - 2026-10-26
 
 ### Added
