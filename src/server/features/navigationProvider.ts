@@ -84,7 +84,16 @@ export function provideDefinition(
   const javaString = findJavaStringAt(text, offset);
   if (javaString?.kind === "view") {
     const targetTemplate = index.findTemplate(javaString.value);
-    return targetTemplate ? locationAt(targetTemplate.uri, Position.create(0, 0)) : undefined;
+    if (targetTemplate) {
+      const fragmentPart = javaString.value.includes("::")
+        ? javaString.value.split("::")[1].trim().split("(", 1)[0].trim()
+        : undefined;
+      const fragment = fragmentPart
+        ? targetTemplate.fragments.find(({ name }) => name === fragmentPart)
+        : undefined;
+      return locationAt(targetTemplate.uri, fragment ? fragment.position : Position.create(0, 0));
+    }
+    return undefined;
   }
   if (javaString?.kind === "route") {
     const handler = index.findHandlersForRoute(javaString.value)[0];

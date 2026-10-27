@@ -33,14 +33,32 @@ export function provideCodeLenses(
       for (const viewName of viewNames) {
         const targetTemplate = index.findTemplate(viewName);
         if (targetTemplate) {
-          lenses.push({
-            range: Range.create(Position.create(line, 0), Position.create(line, 0)),
-            command: {
-              title: `$(file-code) Open template '${viewName}.html'`,
-              command: "thymeleaf.openTemplate",
-              arguments: [targetTemplate.uri]
-            }
-          });
+          const fragmentPart = viewName.includes("::")
+            ? viewName.split("::")[1].trim().split("(", 1)[0].trim()
+            : undefined;
+          const fragment = fragmentPart
+            ? targetTemplate.fragments.find(({ name }) => name === fragmentPart)
+            : undefined;
+
+          if (fragment) {
+            lenses.push({
+              range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+              command: {
+                title: `$(symbol-reference) Open fragment '${fragment.name}' in '${targetTemplate.name}.html'`,
+                command: "thymeleaf.openFragment",
+                arguments: [targetTemplate.uri, fragment.position.line, fragment.position.character]
+              }
+            });
+          } else {
+            lenses.push({
+              range: Range.create(Position.create(line, 0), Position.create(line, 0)),
+              command: {
+                title: `$(file-code) Open template '${targetTemplate.name}.html'`,
+                command: "thymeleaf.openTemplate",
+                arguments: [targetTemplate.uri]
+              }
+            });
+          }
         } else {
           const normalized = normalizeTemplateName(viewName);
           lenses.push({
@@ -128,9 +146,14 @@ export function provideGutterDecorations(
       for (const viewName of viewNames) {
         const targetTemplate = index.findTemplate(viewName);
         if (targetTemplate) {
+          const fragmentPart = viewName.includes("::")
+            ? viewName.split("::")[1].trim().split("(", 1)[0].trim()
+            : undefined;
           decorations.push({
             line: handler.position.line,
-            tooltip: `Thymeleaf template: ${viewName}.html`
+            tooltip: fragmentPart
+              ? `Thymeleaf fragment: ${fragmentPart} in ${targetTemplate.name}.html`
+              : `Thymeleaf template: ${targetTemplate.name}.html`
           });
         } else {
           const normalized = normalizeTemplateName(viewName);

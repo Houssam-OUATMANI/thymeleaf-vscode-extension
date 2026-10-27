@@ -388,10 +388,12 @@ export class ProjectIndex {
   ): readonly ControllerHandler[] {
     const normalizedName = normalizeTemplateName(templateName);
     const workspaceRoot = templateUri ? this.workspaceRootForUri(templateUri) : undefined;
-    return this.handlers.filter(({ uri, viewName, viewNames }) =>
-      (viewName === normalizedName || (viewNames && viewNames.includes(normalizedName))) &&
-      (!workspaceRoot || this.workspaceRootForUri(uri) === workspaceRoot)
-    );
+    return this.handlers.filter(({ uri, viewName, viewNames }) => {
+      const matchesViewName = viewName !== undefined && normalizeTemplateName(viewName) === normalizedName;
+      const matchesViewNames = viewNames !== undefined && viewNames.some((v) => normalizeTemplateName(v) === normalizedName);
+      return (matchesViewName || matchesViewNames) &&
+        (!workspaceRoot || this.workspaceRootForUri(uri) === workspaceRoot);
+    });
   }
 
   public findHandlersForRoute(routePath: string): readonly ControllerHandler[] {

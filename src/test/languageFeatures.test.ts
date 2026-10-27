@@ -2822,6 +2822,81 @@ class MyCtrl {
   }
 });
 
+test("links controller returning fragment (view :: fragment) to template, CodeLens, and Go to Definition", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-fragment-return-"));
+  const templates = path.join(root, "src", "main", "resources", "templates", "items");
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templates, "index.html");
+  const controllerPath = path.join(java, "ItemController.java");
+
+  const templateContent = `<!DOCTYPE html>
+<html>
+<body>
+  <div th:fragment="itemRow">
+    <span th:text="\${itemTitle}">Sample</span>
+  </div>
+</body>
+</html>`;
+
+  const controllerContent = `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+class ItemController {
+  @GetMapping("/item/row")
+  String getItemRow(Model model) {
+    model.addAttribute("itemTitle", "Book");
+    return "items/index :: itemRow";
+  }
+}`;
+
+  try {
+    await Promise.all([
+      mkdir(templates, { recursive: true }),
+      mkdir(java, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, templateContent),
+      writeFile(controllerPath, controllerContent)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // 1. Controller handlers should match template items/index
+    const handlers = index.getHandlersForTemplate("items/index");
+    assert.equal(handlers.length, 1, "Handler returning fragment should match template");
+    assert.equal(handlers[0].name, "getItemRow");
+
+    // 2. Model attributes from fragment handler should be available to template
+    const modelAttrs = index.modelAttributesForTemplate("items/index");
+    assert.ok(modelAttrs.get("itemTitle")?.includes("String"), "modelAttribute 'itemTitle' should be resolved");
+
+    // 3. CodeLens in Java controller should offer Jump/Open fragment
+    const javaDoc = TextDocument.create(pathToFileURL(controllerPath).toString(), "java", 1, controllerContent);
+    const lenses = provideCodeLenses(javaDoc, index);
+    assert.ok(lenses.length > 0, "CodeLens should be present on controller handler");
+    const fragLens = lenses.find((l) => l.command?.title.includes("fragment 'itemRow'"));
+    assert.ok(fragLens, "CodeLens title should reference fragment 'itemRow'");
+    assert.equal(fragLens?.command?.command, "thymeleaf.openFragment");
+
+    // 4. Go to Definition on return "items/index :: itemRow" should jump directly to the fragment
+    const offset = controllerContent.indexOf("items/index :: itemRow") + 2;
+    const def = provideDefinition(javaDoc, javaDoc.positionAt(offset), index);
+    assert.ok(def, "Go to Definition should resolve");
+    assert.equal(def?.uri, pathToFileURL(templatePath).toString());
+    assert.equal(def?.range.start.line, 3, "Should jump to the line of th:fragment='itemRow'");
+
+    // 5. Gutter decoration should mention fragment
+    const gutter = provideGutterDecorations(pathToFileURL(controllerPath).toString(), "java", index);
+    assert.ok(gutter.some((g) => g.tooltip.includes("fragment: itemRow in items/index.html")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createFixture(): Promise<{
   readonly index: ProjectIndex;
   readonly root: string;
