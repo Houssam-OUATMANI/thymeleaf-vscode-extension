@@ -15,12 +15,12 @@ import {
   findUnclosedAttributeExpressions,
   findUnclosedInlineExpressions,
   findUnclosedLiteralSubstitutions,
-  maskStringLiterals,
   ThymeleafExpression
 } from "../../thymeleaf/expressions";
 import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
 import { findThymesVars, normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
 import {
+  extractSubPaths,
   findEnclosingLocalVariables,
   rangeAtOffset,
   resolveModelPath,
@@ -601,36 +601,6 @@ function validateModelProperties(
   return diagnostics;
 }
 
-function extractSubPaths(body: string): { readonly subPath: string; readonly offset: number }[] {
-  const trimmed = body.trim();
-  if (/^[@#\w$]+(?:(?:\.|\?\.)[@#\w$]+(?:\([^()]*\))?|\[[^\]]+\])*$/.test(trimmed)) {
-    const leadingSpaces = /^\s*/.exec(body)?.[0].length ?? 0;
-    return [{ subPath: trimmed, offset: leadingSpaces }];
-  }
-
-  const results: { subPath: string; offset: number }[] = [];
-  const keywords = new Set([
-    "true", "false", "null", "empty", "and", "or", "not",
-    "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof", "matches", "T", "this"
-  ]);
-
-  const maskedBody = maskStringLiterals(body);
-
-  const pathRegex = /(?:^|[^.\w$])([@#a-zA-Z_$][\w$]*(?:\s*(?:\.|\?\.)\s*[a-zA-Z_$][\w$]*(?:\s*\([^()]*\))?|\[[^\]]+\])*)/g;
-  for (const match of maskedBody.matchAll(pathRegex)) {
-    if (match.index === undefined || !match[1]) continue;
-    const fullMatch = match[0];
-    const pathStr = match[1].trim();
-    const leadingInMatch = fullMatch.indexOf(pathStr);
-    const offset = match.index + (leadingInMatch >= 0 ? leadingInMatch : 0);
-    const root = pathStr.split(/[.?[\]\s]/)[0]?.trim();
-    if (root && !keywords.has(root) && !/^\d+$/.test(root)) {
-      results.push({ subPath: pathStr, offset });
-    }
-  }
-
-  return results;
-}
 
 
 function isKnownAttribute(name: string): boolean {

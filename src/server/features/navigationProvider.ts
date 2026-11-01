@@ -24,6 +24,7 @@ import { JavaProperty } from "../javaIndexer";
 import { findThymesVars, IndexedTemplate, ProjectIndex, normalizeTemplateName, sameFileUri } from "../projectIndex";
 import {
   escapeRegExp,
+  extractSubPaths,
   findEnclosingExpression,
   findEnclosingLocalVariables,
   findSelectedObjectType,
@@ -60,19 +61,21 @@ export function provideDefinition(
         ? index.findTemplate(fragmentReference.templateName)
         : template;
       if (!targetTemplate) return undefined;
+      const originRange = fragmentReference.range ? rangeAtOffset(text, fragmentReference.range[0], fragmentReference.range[1]) : undefined;
       if (!fragmentReference.fragmentName) {
-        return locationAt(targetTemplate.uri, Position.create(0, 0));
+        return locationAt(targetTemplate.uri, Position.create(0, 0), originRange);
       }
       const fragment = targetTemplate.fragments.find(({ name }) => name === fragmentReference.fragmentName);
-      return fragment ? locationAt(targetTemplate.uri, fragment.position) : undefined;
+      return fragment ? locationAt(targetTemplate.uri, fragment.position, originRange) : undefined;
     }
 
     const route = findRouteReference(text, offset);
     if (route) {
+      const originRange = rangeAtOffset(text, route.range[0], route.range[1]);
       const handler = index.findHandlersForRoute(route.path)[0];
-      if (handler) return locationAt(handler.uri, handler.position);
+      if (handler) return locationAt(handler.uri, handler.position, originRange);
       const staticFile = index.findStaticFile(route.path);
-      if (staticFile) return locationAt(staticFile.uri, Position.create(0, 0));
+      if (staticFile) return locationAt(staticFile.uri, Position.create(0, 0), originRange);
       return undefined;
     }
 
@@ -80,12 +83,17 @@ export function provideDefinition(
     if (modelDefinition) return modelDefinition;
 
     const property = findModelPropertyAt(text, offset, template.name, index, document.uri);
-    if (property) return locationAt(property.uri, property.position);
+    if (property) {
+      const enclosing = findEnclosingExpression(text, offset);
+      const target = enclosing ? findExpressionTargetAt(enclosing, text, offset) : undefined;
+      return locationAt(property.uri, property.position, target?.range);
+    }
 
     const messageRef = findMessageReference(text, offset);
     if (messageRef) {
       const msgProp = index.findMessageProperty(messageRef.key);
-      if (msgProp) return locationAt(msgProp.uri, msgProp.position);
+      const originRange = rangeAtOffset(text, messageRef.range[0], messageRef.range[1]);
+      if (msgProp) return locationAt(msgProp.uri, msgProp.position, originRange);
     }
 
     return undefined;
@@ -172,10 +180,8 @@ export function provideTypeDefinition(
 
   const expression = findEnclosingExpression(text, offset);
   if (!expression || expression.prefix !== "$") return undefined;
-  const rootMatch = /^\s*([\w$]+)/.exec(expression.body);
-  if (!rootMatch || rootMatch.index === undefined) return undefined;
-  const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - rootMatch[1].length;
-  if (offset < rootStart || offset > rootStart + rootMatch[1].length) return undefined;
+  const target = findExpressionTargetAt(expression, text, offset);
+  if (!target || target.kind !== "root") return undefined;
 
   const modelAttributes = new Map(
     index.modelAttributesForTemplate(template.name, document.uri)
@@ -183,9 +189,9 @@ export function provideTypeDefinition(
   for (const thymesVar of findThymesVars(text)) {
     modelAttributes.set(thymesVar.id, thymesVar.typeName);
   }
-  const typeName = resolveModelType(rootMatch[1], text, expression.start, modelAttributes, index);
+  const typeName = resolveModelType(target.name, text, expression.start, modelAttributes, index);
   const javaClass = typeName ? findTypeClass(typeName, index) : undefined;
-  return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
+  return javaClass ? locationAt(javaClass.uri, javaClass.position, target.range) : undefined;
 }
 
 function findTypeClass(typeName: string, index: ProjectIndex) {
@@ -651,54 +657,59 @@ function findModelPropertyOccurrences(
 ): { readonly property: JavaProperty; readonly range: Range }[] {
   if (expression.prefix !== "$" && expression.prefix !== "*") return [];
   const body = expression.body;
-  const rootMatch = /^\s*([@#\w$]+)/.exec(body);
-  if (!rootMatch || rootMatch.index === undefined) return [];
-  const rootName = rootMatch[1];
   const occurrences: { property: JavaProperty; range: Range }[] = [];
+  const bodyStart = baseOffset + expression.start + 2;
 
-  if (expression.prefix === "*") {
-    const rootEnd = rootMatch.index + rootMatch[0].length;
-    const result = resolveModelPath(
-      body.slice(0, rootEnd),
-      expression.prefix,
-      text,
-      baseOffset + expression.start,
-      templateName,
-      index,
-      templateUri
-    );
-    if (result?.property) {
-      const start = baseOffset + expression.start + 2 + rootMatch.index + rootMatch[0].lastIndexOf(rootName);
-      occurrences.push({
-        property: result.property,
-        range: rangeAtOffset(text, start, start + rootName.length)
-      });
+  const subPaths = extractSubPaths(body);
+  for (const sub of subPaths) {
+    const rootMatch = /^\s*([@#\w$]+)/.exec(sub.subPath);
+    if (!rootMatch || rootMatch.index === undefined) continue;
+    const rootName = rootMatch[1];
+
+    if (expression.prefix === "*") {
+      const rootEnd = rootMatch.index + rootMatch[0].length;
+      const result = resolveModelPath(
+        sub.subPath.slice(0, rootEnd),
+        expression.prefix,
+        text,
+        bodyStart + sub.offset,
+        templateName,
+        index,
+        templateUri
+      );
+      if (result?.property) {
+        const start = bodyStart + sub.offset + rootMatch.index + rootMatch[0].lastIndexOf(rootName);
+        occurrences.push({
+          property: result.property,
+          range: rangeAtOffset(text, start, start + rootName.length)
+        });
+      }
     }
-  }
 
-  let accessOffset = rootMatch.index + rootMatch[0].length;
-  while (accessOffset < body.length) {
-    const access = readMemberAccess(body, accessOffset);
-    if (!access) break;
-    const { name, nameOffset, isMethodCall } = access;
-    accessOffset = access.endOffset;
-    if (isMethodCall) continue;
+    let accessOffset = rootMatch.index + rootMatch[0].length;
+    while (accessOffset < sub.subPath.length) {
+      const access = readMemberAccess(sub.subPath, accessOffset);
+      if (!access) break;
+      const { name, nameOffset, isMethodCall } = access;
+      accessOffset = access.endOffset;
+      if (isMethodCall) continue;
 
-    const result = resolveModelPath(
-      body.slice(0, nameOffset + name.length),
-      expression.prefix,
-      text,
-      baseOffset + expression.start,
-      templateName,
-      index,
-      templateUri
-    );
-    if (result?.property) {
-      const start = baseOffset + expression.start + 2 + nameOffset;
-      occurrences.push({
-        property: result.property,
-        range: rangeAtOffset(text, start, start + name.length)
-      });
+      const result = resolveModelPath(
+        sub.subPath.slice(0, nameOffset + name.length),
+        expression.prefix,
+        text,
+        bodyStart + sub.offset,
+        templateName,
+        index,
+        templateUri
+      );
+      if (result?.property) {
+        const start = bodyStart + sub.offset + nameOffset;
+        occurrences.push({
+          property: result.property,
+          range: rangeAtOffset(text, start, start + name.length)
+        });
+      }
     }
   }
   return occurrences;
@@ -774,6 +785,34 @@ function findModelPropertyAt(
   if (!expression) return undefined;
   const method = findModelMethodAt(text, offset, templateName, index, templateUri);
   if (method) return method;
+
+  const target = findExpressionTargetAt(expression, text, offset);
+  if (target && target.kind === "member" && !target.isMethodCall && target.receiverText) {
+    const receiver = resolveModelPath(
+      target.receiverText,
+      expression.prefix,
+      text,
+      target.receiverOffsetInDoc ?? expression.start,
+      templateName,
+      index,
+      templateUri
+    );
+    if (receiver) {
+      return index.findProperty(receiver.typeName, target.name);
+    }
+  }
+
+  if (expression.prefix === "*" && target && target.kind === "root") {
+    const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
+    for (const thymesVar of findThymesVars(text)) {
+      modelAttributes.set(thymesVar.id, thymesVar.typeName);
+    }
+    const selectedType = findSelectedObjectType(text, expression.start, modelAttributes, index);
+    if (selectedType) {
+      return index.findProperty(selectedType, target.name);
+    }
+  }
+
   return findModelPropertyOccurrences(expression, text, 0, templateName, index, templateUri)
     .find(({ range }) =>
       offset >= offsetAt(text, range.start) && offset <= offsetAt(text, range.end)
@@ -789,51 +828,39 @@ function findModelMethodAt(
 ): JavaProperty | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || (expression.prefix !== "$" && expression.prefix !== "*")) return undefined;
-  const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
-  if (!rootMatch || rootMatch.index === undefined) return undefined;
 
-  if (expression.prefix === "*") {
-    const rootName = rootMatch[1];
-    const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - rootName.length;
-    const rootEnd = rootStart + rootName.length;
-    const remainingAfterRoot = expression.body.slice(rootMatch.index + rootMatch[0].length);
+  const target = findExpressionTargetAt(expression, text, offset);
+  if (!target) return undefined;
+
+  if (expression.prefix === "*" && target.kind === "root") {
+    const remainingAfterRoot = expression.body.slice(expression.body.indexOf(target.name) + target.name.length);
     if (/^\s*\(/.test(remainingAfterRoot)) {
-      if (offset >= rootStart && offset <= rootEnd) {
-        const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
-        for (const thymesVar of findThymesVars(text)) {
-          modelAttributes.set(thymesVar.id, thymesVar.typeName);
-        }
-        const selectedType = findSelectedObjectType(text, expression.start, modelAttributes, index);
-        if (selectedType) {
-          return index.findMethodDefinition(selectedType, rootName);
-        }
+      const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
+      for (const thymesVar of findThymesVars(text)) {
+        modelAttributes.set(thymesVar.id, thymesVar.typeName);
+      }
+      const selectedType = findSelectedObjectType(text, expression.start, modelAttributes, index);
+      if (selectedType) {
+        return index.findMethodDefinition(selectedType, target.name);
       }
     }
   }
 
-  let accessOffset = rootMatch.index + rootMatch[0].length;
-  while (accessOffset < expression.body.length) {
-    const access = readMemberAccess(expression.body, accessOffset);
-    if (!access) break;
-    const { name, nameOffset } = access;
-    const nameStart = expression.start + 2 + nameOffset;
-    const nameEnd = nameStart + name.length;
-    if (access.isMethodCall && offset >= nameStart && offset <= nameEnd) {
-      const receiver = resolveModelPath(
-        expression.body.slice(0, nameOffset),
-        expression.prefix,
-        text,
-        expression.start,
-        templateName,
-        index,
-        templateUri
-      );
-      return receiver
-        ? index.findMethodDefinition(receiver.typeName, name)
-        : undefined;
-    }
-    accessOffset = access.endOffset;
+  if (target.kind === "member" && target.isMethodCall && target.receiverText) {
+    const receiver = resolveModelPath(
+      target.receiverText,
+      expression.prefix,
+      text,
+      target.receiverOffsetInDoc ?? expression.start,
+      templateName,
+      index,
+      templateUri
+    );
+    return receiver
+      ? index.findMethodDefinition(receiver.typeName, target.name)
+      : undefined;
   }
+
   return undefined;
 }
 
@@ -897,6 +924,75 @@ function findClosingParenthesis(text: string, openOffset: number): number {
   return -1;
 }
 
+interface ExpressionTarget {
+  readonly subPath: string;
+  readonly kind: "root" | "member";
+  readonly name: string;
+  readonly range: Range;
+  readonly isMethodCall?: boolean;
+  readonly receiverText?: string;
+  readonly receiverOffsetInDoc?: number;
+}
+
+function findExpressionTargetAt(
+  expression: { readonly prefix: string; readonly body: string; readonly start: number },
+  text: string,
+  offset: number
+): ExpressionTarget | undefined {
+  const bodyStart = expression.start + 2;
+  const cursorRel = offset - bodyStart;
+  if (cursorRel < 0 || cursorRel > expression.body.length) return undefined;
+
+  const subPaths = extractSubPaths(expression.body);
+  for (const sub of subPaths) {
+    const subStart = sub.offset;
+    const subEnd = sub.offset + sub.subPath.length;
+    if (cursorRel < subStart || cursorRel > subEnd) continue;
+
+    const rootMatch = /^\s*([@#\w$]+)/.exec(sub.subPath);
+    if (!rootMatch || rootMatch.index === undefined) continue;
+    const rootName = rootMatch[1];
+    const leadingSpaces = rootMatch[0].length - rootName.length;
+    const rootStartRel = sub.offset + rootMatch.index + leadingSpaces;
+    const rootEndRel = rootStartRel + rootName.length;
+    const rootStartDoc = bodyStart + rootStartRel;
+    const rootEndDoc = bodyStart + rootEndRel;
+
+    if (offset >= rootStartDoc && offset <= rootEndDoc) {
+      return {
+        subPath: sub.subPath,
+        kind: "root",
+        name: rootName,
+        range: rangeAtOffset(text, rootStartDoc, rootEndDoc)
+      };
+    }
+
+    let accessOffset = rootMatch.index + rootMatch[0].length;
+    while (accessOffset < sub.subPath.length) {
+      const access = readMemberAccess(sub.subPath, accessOffset);
+      if (!access) break;
+      const memberStartRel = sub.offset + access.nameOffset;
+      const memberEndRel = memberStartRel + access.name.length;
+      const memberStartDoc = bodyStart + memberStartRel;
+      const memberEndDoc = bodyStart + memberEndRel;
+
+      if (offset >= memberStartDoc && offset <= memberEndDoc) {
+        return {
+          subPath: sub.subPath,
+          kind: "member",
+          name: access.name,
+          range: rangeAtOffset(text, memberStartDoc, memberEndDoc),
+          isMethodCall: access.isMethodCall,
+          receiverText: sub.subPath.slice(0, access.nameOffset).trim().replace(/\.$/, ""),
+          receiverOffsetInDoc: bodyStart + sub.offset
+        };
+      }
+      accessOffset = access.endOffset;
+    }
+  }
+  return undefined;
+}
+
 function findModelDefinitionAt(
   text: string,
   offset: number,
@@ -906,14 +1002,14 @@ function findModelDefinitionAt(
 ): Location | undefined {
   const expression = findEnclosingExpression(text, offset);
   if (!expression || expression.prefix !== "$") return undefined;
-  const rootMatch = /^\s*([@#\w$]+)/.exec(expression.body);
-  if (!rootMatch || rootMatch.index === undefined) return undefined;
-  const modelName = rootMatch[1];
-  const rootStart = expression.start + 2 + rootMatch.index + rootMatch[0].length - modelName.length;
-  if (offset < rootStart || offset > rootStart + modelName.length) return undefined;
+  const target = findExpressionTargetAt(expression, text, offset);
+  if (!target || target.kind !== "root") return undefined;
+  const modelName = target.name;
+  const originRange = target.range;
+
   if (modelName.startsWith("@")) {
     const bean = index.findSpringBean(modelName.slice(1));
-    return bean ? locationAt(bean.uri, bean.position) : undefined;
+    return bean ? locationAt(bean.uri, bean.position, originRange) : undefined;
   }
 
   const modelAttributes = new Map(index.modelAttributesForTemplate(templateName, templateUri));
@@ -925,33 +1021,36 @@ function findModelDefinitionAt(
   const localVars = findEnclosingLocalVariables(text, expression.start, modelAttributes, index);
   const foundLocal = localVars.find((v) => v.name === modelName);
   if (foundLocal) {
-    return locationAt(templateUri, positionAt(text, foundLocal.declarationOffset));
+    return locationAt(templateUri, positionAt(text, foundLocal.declarationOffset), originRange);
   }
 
-  return modelAttributeDefinition(templateName, modelName, index, text, templateUri) ??
-    (() => {
-      const typeName = resolveModelType(
-        modelName,
-        text,
-        expression.start,
-        modelAttributes,
-        index
-      );
-      const javaClass = typeName ? index.findClass(typeName) : undefined;
-      return javaClass ? locationAt(javaClass.uri, javaClass.position) : undefined;
-    })();
+  const attrDef = modelAttributeDefinition(templateName, modelName, index, text, templateUri);
+  if (attrDef) {
+    return locationAt(attrDef.uri, attrDef.range.start, originRange);
+  }
+
+  const typeName = resolveModelType(
+    modelName,
+    text,
+    expression.start,
+    modelAttributes,
+    index
+  );
+  const javaClass = typeName ? index.findClass(typeName) : undefined;
+  return javaClass ? locationAt(javaClass.uri, javaClass.position, originRange) : undefined;
 }
 
 function findFragmentReference(
   text: string,
   offset: number
-): { templateName: string | undefined; fragmentName: string | undefined } | undefined {
+): { templateName: string | undefined; fragmentName: string | undefined; range?: [number, number] } | undefined {
   for (const expression of findThymeleafExpressions(text)) {
     if (expression.prefix !== "~" || offset < expression.start || offset > expression.end) continue;
     const [templateName, fragment] = expression.body.split("::", 2).map((part) => part.trim());
     return {
       templateName: templateName ? normalizeTemplateName(templateName) : undefined,
-      fragmentName: fragment?.split("(", 1)[0]?.trim()
+      fragmentName: fragment?.split("(", 1)[0]?.trim(),
+      range: [expression.start, expression.end]
     };
   }
 

@@ -1,11 +1,11 @@
-import { Location, Position, Range, TextDocument } from "vscode-languageserver/node";
+import { Location, LocationLink, Position, Range, TextDocument } from "vscode-languageserver/node";
 import {
   findTagEnd,
   findThymeleafAttributes,
   isVoidElement,
   readTagName
 } from "../../thymeleaf/htmlParser";
-import { findThymeleafExpressions } from "../../thymeleaf/expressions";
+import { findThymeleafExpressions, maskStringLiterals } from "../../thymeleaf/expressions";
 import { JavaProperty } from "../javaIndexer";
 import { findThymesVars, ProjectIndex } from "../projectIndex";
 
@@ -876,10 +876,19 @@ export function rangeAtOffset(text: string, start: number, end: number): Range {
 
 export function locationAt(
   uri: string,
-  position: { readonly line: number; readonly character: number }
-): Location {
+  position: { readonly line: number; readonly character: number },
+  originRange?: Range
+): Location & LocationLink {
   const point = Position.create(position.line, position.character);
-  return Location.create(uri, Range.create(point, point));
+  const range = Range.create(point, point);
+  return {
+    uri,
+    range,
+    targetUri: uri,
+    targetRange: range,
+    targetSelectionRange: range,
+    originSelectionRange: originRange
+  };
 }
 
 export function rangeAt(document: TextDocument, offsets: readonly [number, number]): Range {
@@ -973,4 +982,84 @@ export function isOffsetInsideElement(text: string, elementStart: number, offset
   }
 
   return depth > 0 && offset < text.length;
+}
+export interface SubPathInfo {
+  readonly subPath: string;
+  readonly offset: number;
+}
+
+export function extractSubPaths(body: string): SubPathInfo[] {
+  const results: SubPathInfo[] = [];
+  const keywords = new Set([
+    "true", "false", "null", "empty", "and", "or", "not",
+    "eq", "ne", "lt", "gt", "le", "ge", "div", "mod", "instanceof", "matches", "T", "this"
+  ]);
+
+  const maskedBody = maskStringLiterals(body);
+  let i = 0;
+  while (i < maskedBody.length) {
+    const char = maskedBody[i];
+    let prevNonSpace = i - 1;
+    while (prevNonSpace >= 0 && /\s/.test(maskedBody[prevNonSpace])) prevNonSpace--;
+    const prevChar = prevNonSpace >= 0 ? maskedBody[prevNonSpace] : "";
+    const isPrecededByDot = prevChar === "." || (prevChar === "?" && prevNonSpace > 0 && maskedBody[prevNonSpace - 1] === "?");
+
+    if (/[@#a-zA-Z_$]/.test(char) && !isPrecededByDot && (i === 0 || !/[\w$]/.test(maskedBody[i - 1]))) {
+      const start = i;
+      if (char === "#" || char === "@") i++;
+      while (i < maskedBody.length && /[\w$]/.test(maskedBody[i])) i++;
+      const root = body.slice(start, i);
+
+      if (!root || root === "#" || root === "@" || root === "$") {
+        i = start + 1;
+        continue;
+      }
+
+      let chainEnd = i;
+      while (i < maskedBody.length) {
+        let lookahead = i;
+        while (lookahead < maskedBody.length && /\s/.test(maskedBody[lookahead])) lookahead++;
+        if (maskedBody[lookahead] === "." || (maskedBody[lookahead] === "?" && maskedBody[lookahead + 1] === ".")) {
+          const isSafe = maskedBody[lookahead] === "?";
+          lookahead += isSafe ? 2 : 1;
+          while (lookahead < maskedBody.length && /\s/.test(maskedBody[lookahead])) lookahead++;
+          if (lookahead < maskedBody.length && /[a-zA-Z_$]/.test(maskedBody[lookahead])) {
+            while (lookahead < maskedBody.length && /[\w$]/.test(maskedBody[lookahead])) lookahead++;
+            let parenCheck = lookahead;
+            while (parenCheck < maskedBody.length && /\s/.test(maskedBody[parenCheck])) parenCheck++;
+            if (maskedBody[parenCheck] === "(") {
+              let depth = 1;
+              parenCheck++;
+              while (parenCheck < maskedBody.length && depth > 0) {
+                if (maskedBody[parenCheck] === "(") depth++;
+                else if (maskedBody[parenCheck] === ")") depth--;
+                parenCheck++;
+              }
+              lookahead = parenCheck;
+            }
+            i = lookahead;
+            chainEnd = i;
+            continue;
+          }
+        } else if (maskedBody[lookahead] === "[") {
+          let closeBracket = maskedBody.indexOf("]", lookahead);
+          if (closeBracket > 0) {
+            i = closeBracket + 1;
+            chainEnd = i;
+            continue;
+          }
+        }
+        break;
+      }
+
+      if (!keywords.has(root) && !/^\d+$/.test(root)) {
+        results.push({ subPath: body.slice(start, chainEnd), offset: start });
+      }
+      i = Math.max(start + 1, start + root.length);
+    } else {
+      i++;
+    }
+  }
+
+  return results;
 }

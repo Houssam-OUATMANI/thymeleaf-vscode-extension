@@ -3203,3 +3203,109 @@ nav.home=Home Page
     dispose: () => rm(root, { recursive: true, force: true })
   };
 }
+// Tests for Phase 1 (complex SpEL navigation) and Phase 2 (LocationLink full-path underline)
+// Appended directly to languageFeatures.test.ts
+
+test("navigates correctly in complex SpEL expressions with negation and method calls", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-spel-complex-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const pagePath = path.join(java, "PageResult.java");
+  const templatePath = path.join(templates, "list.html");
+
+  try {
+    await Promise.all([mkdir(java, { recursive: true }), mkdir(templates, { recursive: true })]);
+    await Promise.all([
+      writeFile(pagePath, `package demo;\npublic class PageResult {\n  private int size;\n  private String term;\n  public boolean hasNext() { return false; }\n}`),
+      writeFile(path.join(java, "ListController.java"), `package demo;\n@org.springframework.stereotype.Controller\npublic class ListController {\n  @org.springframework.web.bind.annotation.GetMapping("/list")\n  public String list(org.springframework.ui.Model model) {\n    model.addAttribute("ps", new PageResult());\n    return "list";\n  }\n}`),
+      writeFile(templatePath, `<html><a>page</a></html>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // Test Bug 1: navigation inside negation expression ${! ps.hasNext()}
+    const negationHtml = `<a th:disabled="\${! ps.hasNext()}">NEXT</a>`;
+    const negDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, negationHtml);
+
+    const psOffset = negationHtml.indexOf("ps");
+    const psDef = provideDefinition(negDoc, negDoc.positionAt(psOffset + 1), index);
+    assert.ok(psDef, "Should navigate to 'ps' model attribute inside '\${! ps.hasNext()}'");
+
+    const hasNextOffset = negationHtml.indexOf("hasNext");
+    const hasNextDef = provideDefinition(negDoc, negDoc.positionAt(hasNextOffset + 2), index);
+    assert.ok(hasNextDef, "Should navigate to 'hasNext()' method inside '\${! ps.hasNext()}'");
+
+    // Test: navigation on ps.size in route expression
+    const multiHtml = `<a th:href="@{/(page=\${ps.size})}">link</a>`;
+    const multiDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, multiHtml);
+
+    const sizeOffset = multiHtml.indexOf(".size") + 1;
+    const sizeDef = provideDefinition(multiDoc, multiDoc.positionAt(sizeOffset), index);
+    assert.ok(sizeDef, "Should navigate to '.size' property in route expression");
+
+    const termHtml = `<a th:href="@{/(term=\${ps.term})}">link</a>`;
+    const termDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, termHtml);
+    const termOffset = termHtml.indexOf(".term") + 1;
+    const termDef = provideDefinition(termDoc, termDoc.positionAt(termOffset), index);
+    assert.ok(termDef, "Should navigate to '.term' property in route expression");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ctrl+click on static resource @{/css/bundle.css} provides full-path originSelectionRange", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-link-underline-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const staticCss = path.join(root, "src", "main", "resources", "static", "css");
+  const templatePath = path.join(templates, "page.html");
+
+  try {
+    await Promise.all([
+      mkdir(java, { recursive: true }),
+      mkdir(templates, { recursive: true }),
+      mkdir(staticCss, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(path.join(staticCss, "bundle.css"), "/* css */"),
+      writeFile(path.join(java, "HomeController.java"), `package demo;\n@org.springframework.stereotype.Controller\npublic class HomeController {\n  @org.springframework.web.bind.annotation.GetMapping("/")\n  public String index() { return "page"; }\n}`),
+      writeFile(templatePath, `<html>\n<link rel="stylesheet" th:href="@{/css/bundle.css}" />\n</html>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const templateContent = await readFile(templatePath, "utf-8");
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+
+    // Click on "css" part of /css/bundle.css
+    const cssOffset = templateContent.indexOf("/css/bundle.css");
+    const bundleOffset = templateContent.indexOf("bundle");
+
+    const cssClickDef = provideDefinition(doc, doc.positionAt(cssOffset + 2), index) as any;
+    assert.ok(cssClickDef, "Should navigate when clicking anywhere in /css/bundle.css");
+
+    const bundleClickDef = provideDefinition(doc, doc.positionAt(bundleOffset + 2), index) as any;
+    assert.ok(bundleClickDef, "Should navigate when clicking on 'bundle' part");
+
+    // Both should resolve to the same file
+    assert.equal(cssClickDef.uri, bundleClickDef.uri, "Both clicks should navigate to the same static file");
+
+    // The LocationLink originSelectionRange should cover the SAME range for both clicks (the full path)
+    const cssOrigin = cssClickDef.originSelectionRange;
+    const bundleOrigin = bundleClickDef.originSelectionRange;
+    if (cssOrigin && bundleOrigin) {
+      assert.equal(
+        cssOrigin.start.character, bundleOrigin.start.character,
+        "Both clicks should produce the same start of origin range (full path)"
+      );
+      assert.equal(
+        cssOrigin.end.character, bundleOrigin.end.character,
+        "Both clicks should produce the same end of origin range (full path)"
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
