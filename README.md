@@ -75,7 +75,8 @@ Screenshots are hosted in the repository and are not included in the extension p
 - Rename Java model fields and record components together with Java references and matching Thymeleaf property references.
 - Diagnostics for malformed expressions, unknown Thymeleaf attributes, missing templates, fragments and routes, and unresolved model properties.
 - Quick fixes for missing expression braces, common attribute misspellings, and likely model-property typos.
-- Code lenses and gutter markers for navigating between Spring controller handlers, templates, and Thymeleaf fragments.
+- Code lenses and gutter markers for navigating between Spring controller handlers, templates, and Thymeleaf fragments. Template paths and controller names are kept concise, and templates linked to multiple handlers offer a controller picker.
+- Automatic document highlighting for local variables declared by `th:each`, `th:with`, and fragment parameters when selecting a declaration or use in a Thymeleaf expression.
 - Hover documentation for resolved Java-backed model properties and methods; references for model properties and routes; semantic coloring for Java-backed model members in attributes and inline expressions.
 - Thymeleaf syntax highlighting and optional snippets in HTML files.
 - Support for both standard `th:*` attributes and their HTML5 `data-th-*` equivalents, including completion, navigation, diagnostics, and syntax highlighting.

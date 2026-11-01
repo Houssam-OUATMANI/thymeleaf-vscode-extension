@@ -16,6 +16,7 @@ import {
   provideSemanticTokens,
   SEMANTIC_TOKEN_TYPES
 } from "../server/features/semanticTokensProvider";
+import { provideDocumentHighlights } from "../server/features/documentHighlightProvider";
 import {
   provideDefinition,
   provideHover,
@@ -407,6 +408,89 @@ test("does not choose an arbitrary model type when multiple handlers share a vie
     const document = TextDocument.create(templateUri, "html", 1, `<span th:text="\${item.}"></span>`);
     const completions = provideCompletions(document, document.positionAt(document.getText().indexOf("item.") + 5), index);
     assert.deepEqual(completions.filter(({ label }) => ["firstName", "secondName"].includes(label)), []);
+
+    const controllerLenses = provideCodeLenses(document, index);
+    const linkedControllers = controllerLenses.find(({ command }) =>
+      command?.command === "thymeleaf.openController"
+    )?.command?.arguments?.[0];
+    assert.ok(Array.isArray(linkedControllers));
+    assert.deepEqual(
+      linkedControllers.map(({ label }: { readonly label: string }) => label).sort(),
+      ["FirstController.first()", "SecondController.second()"]
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("highlights declarations and references of Thymeleaf-local variables", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-local-highlights-"));
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "locals.html");
+  const template = `<ul th:each="item : \${users}">
+  <li th:text="\${item.name}"></li>
+  <li th:classappend="\${item.active ? 'item' : 'inactive'}"></li>
+  <span>item</span>
+</ul>
+<section th:with="label='active'" th:title="\${label}"></section>
+<div th:fragment="row(value)" th:text="\${value}"></div>`;
+
+  try {
+    await mkdir(templates, { recursive: true });
+    await writeFile(templatePath, template);
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const document = TextDocument.create(
+      pathToFileURL(templatePath).toString(),
+      "html",
+      1,
+      template
+    );
+
+    const loopHighlights = provideDocumentHighlights(
+      document,
+      document.positionAt(template.indexOf("item :") + 1),
+      index
+    );
+    assert.deepEqual(
+      loopHighlights.map(({ range }) => document.getText(range)),
+      ["item", "item", "item"]
+    );
+    assert.deepEqual(
+      loopHighlights.map(({ range }) => document.offsetAt(range.start)),
+      [
+        template.indexOf("item :"),
+        template.indexOf("item.name"),
+        template.indexOf("item.active")
+      ]
+    );
+
+    const labelHighlights = provideDocumentHighlights(
+      document,
+      document.positionAt(template.indexOf("label='") + 1),
+      index
+    );
+    assert.deepEqual(
+      labelHighlights.map(({ range }) => document.getText(range)),
+      ["label", "label"]
+    );
+
+    const fragmentHighlights = provideDocumentHighlights(
+      document,
+      document.positionAt(template.indexOf("value)") + 1),
+      index
+    );
+    assert.deepEqual(
+      fragmentHighlights.map(({ range }) => document.getText(range)),
+      ["value", "value"]
+    );
+
+    const plainTextHighlights = provideDocumentHighlights(
+      document,
+      document.positionAt(template.indexOf("<span>item") + "<span>".length + 1),
+      index
+    );
+    assert.deepEqual(plainTextHighlights, []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2007,6 +2091,56 @@ test("provides bidirectional CodeLens and Gutter decorations between controllers
     assert.ok(htmlGutter.some((g) => g.tooltip.includes("UserController")));
   } finally {
     await fixture.dispose();
+  }
+});
+
+test("compacts long template paths and controller names in CodeLens titles", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-compact-codelens-"));
+  const templateRoot = path.join(root, "src", "main", "resources", "templates");
+  const javaRoot = path.join(root, "src", "main", "java", "com", "example", "admin");
+  const templateName = "admin/customer/management/long-template-name";
+  const templatePath = path.join(templateRoot, ...templateName.split("/")) + ".html";
+  const controllerPath = path.join(javaRoot, "CustomerManagementController.java");
+  const controllerText = `package com.example.admin;
+@Controller class CustomerManagementController {
+  @GetMapping("/")
+  String page() { return "${templateName}"; }
+}`;
+
+  try {
+    await Promise.all([
+      mkdir(path.dirname(templatePath), { recursive: true }),
+      mkdir(javaRoot, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, `<html></html>`),
+      writeFile(controllerPath, controllerText)
+    ]);
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const javaDocument = TextDocument.create(
+      pathToFileURL(controllerPath).toString(),
+      "java",
+      1,
+      controllerText
+    );
+    const templateDocument = TextDocument.create(
+      pathToFileURL(templatePath).toString(),
+      "html",
+      1,
+      `<html></html>`
+    );
+
+    const templateLens = provideCodeLenses(javaDocument, index)[0];
+    assert.ok(templateLens?.command?.title.includes("long-template-name.html"));
+    assert.ok(templateLens?.command?.title.includes("…/"));
+    assert.ok(!templateLens?.command?.title.includes(templateName));
+
+    const controllerLens = provideCodeLenses(templateDocument, index)[0];
+    assert.ok(controllerLens?.command?.title.includes("CustomerManagementController.page()"));
+    assert.ok(!controllerLens?.command?.title.includes("com.example.admin"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

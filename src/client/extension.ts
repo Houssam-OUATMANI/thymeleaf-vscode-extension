@@ -11,6 +11,13 @@ import { registerJavaSupport } from "./javaSupport";
 
 let languageClient: LanguageClient | undefined;
 
+interface ControllerTarget {
+  readonly uri: string;
+  readonly line: number;
+  readonly character: number;
+  readonly label: string;
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const serverModule = context.asAbsolutePath(path.join("dist", "server.js"));
   const serverOptions: ServerOptions = {
@@ -51,11 +58,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
       await vscode.window.showTextDocument(doc);
     }),
-    vscode.commands.registerCommand("thymeleaf.openController", async (uri: string, line: number, character: number) => {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
-      const pos = new vscode.Position(line, character);
-      await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
-    }),
+    vscode.commands.registerCommand(
+      "thymeleaf.openController",
+      async (targets: readonly ControllerTarget[] | string, line?: number, character?: number) => {
+        let target: ControllerTarget | undefined;
+        if (typeof targets === "string") {
+          if (line === undefined || character === undefined) {
+            vscode.window.showErrorMessage("Unable to open the Spring controller: its location is missing.");
+            return;
+          }
+          target = { uri: targets, line, character, label: "Spring Controller" };
+        } else if (targets.length === 1) {
+          target = targets[0];
+        } else if (targets.length > 1) {
+          const selected = await vscode.window.showQuickPick(
+            targets.map((candidate) => ({
+              label: candidate.label,
+              description: compactQuickPickPath(candidate.uri),
+              target: candidate
+            })),
+            { placeHolder: "Choose a Spring controller linked to this template" }
+          );
+          target = selected?.target;
+        }
+        if (!target) return;
+
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(target.uri));
+        const pos = new vscode.Position(target.line, target.character);
+        await vscode.window.showTextDocument(doc, { selection: new vscode.Range(pos, pos) });
+      }
+    ),
     vscode.commands.registerCommand("thymeleaf.openFragment", async (uri: string, line: number, character: number) => {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
       const pos = new vscode.Position(line, character);
@@ -330,6 +362,13 @@ ${fragmentDeclaration}
 
   await languageClient.start();
   updateGutter(vscode.window.activeTextEditor);
+}
+
+function compactQuickPickPath(uri: string, maxLength = 48): string {
+  const filePath = vscode.workspace.asRelativePath(vscode.Uri.parse(uri), true);
+  return filePath.length <= maxLength
+    ? filePath
+    : `…${filePath.slice(-(maxLength - 1))}`;
 }
 
 export async function deactivate(): Promise<void> {

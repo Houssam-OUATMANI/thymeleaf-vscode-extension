@@ -9,6 +9,13 @@ import { findThymeleafAttributes } from "../../thymeleaf/htmlParser";
 import { normalizeTemplateName, ProjectIndex, sameFileUri } from "../projectIndex";
 import { positionAt } from "./featureUtils";
 
+export interface ControllerCodeLensTarget {
+  readonly uri: string;
+  readonly line: number;
+  readonly character: number;
+  readonly label: string;
+}
+
 export interface GutterDecoration {
   readonly line: number;
   readonly tooltip: string;
@@ -44,7 +51,7 @@ export function provideCodeLenses(
             lenses.push({
               range: Range.create(Position.create(line, 0), Position.create(line, 0)),
               command: {
-                title: `$(symbol-reference) Open fragment '${fragment.name}' in '${targetTemplate.name}.html'`,
+                title: `$(symbol-reference) Open fragment '${fragment.name}' in '${compactTemplateName(targetTemplate.name)}.html'`,
                 command: "thymeleaf.openFragment",
                 arguments: [targetTemplate.uri, fragment.position.line, fragment.position.character]
               }
@@ -53,7 +60,7 @@ export function provideCodeLenses(
             lenses.push({
               range: Range.create(Position.create(line, 0), Position.create(line, 0)),
               command: {
-                title: `$(file-code) Open template '${targetTemplate.name}.html'`,
+                title: `$(file-code) Open template '${compactTemplateName(targetTemplate.name)}.html'`,
                 command: "thymeleaf.openTemplate",
                 arguments: [targetTemplate.uri]
               }
@@ -64,7 +71,7 @@ export function provideCodeLenses(
           lenses.push({
             range: Range.create(Position.create(line, 0), Position.create(line, 0)),
             command: {
-              title: `$(new-file) Create template '${normalized}.html'`,
+              title: `$(new-file) Create template '${compactTemplateName(normalized)}.html'`,
               command: "thymeleaf.createTemplate",
               arguments: [normalized, document.uri]
             }
@@ -86,10 +93,15 @@ export function provideCodeLenses(
         range: Range.create(Position.create(0, 0), Position.create(0, 0)),
         command: {
           title: handlers.length === 1
-            ? `$(server-process) Spring Controller: ${first.ownerType}.${first.name}()`
+            ? `$(server-process) Spring Controller: ${shortTypeName(first.ownerType)}.${first.name}()`
             : `$(server-process) ${handlers.length} Spring Controllers linked`,
           command: "thymeleaf.openController",
-          arguments: [first.uri, first.position.line, first.position.character]
+          arguments: [handlers.map((handler): ControllerCodeLensTarget => ({
+            uri: handler.uri,
+            line: handler.position.line,
+            character: handler.position.character,
+            label: `${shortTypeName(handler.ownerType)}.${handler.name}()`
+          }))]
         }
       });
     }
@@ -113,7 +125,7 @@ export function provideCodeLenses(
           command: {
             title: frag
               ? `$(symbol-reference) Jump to fragment '${frag.name}'`
-              : `$(file-code) Jump to template '${targetTemplate.name}'`,
+              : `$(file-code) Jump to template '${compactTemplateName(targetTemplate.name)}'`,
             command: "thymeleaf.openFragment",
             arguments: [
               targetTemplate.uri,
@@ -127,6 +139,20 @@ export function provideCodeLenses(
   }
 
   return lenses;
+}
+
+function shortTypeName(qualifiedName: string): string {
+  return qualifiedName.split(".").at(-1) ?? qualifiedName;
+}
+
+function compactTemplateName(name: string, maxLength = 36): string {
+  if (name.length <= maxLength) return name;
+  const fileName = name.split("/").at(-1) ?? name;
+  const suffixLength = maxLength - 2;
+  if (fileName.length >= suffixLength) {
+    return `${fileName.slice(0, suffixLength - 1)}…`;
+  }
+  return `…/${name.slice(-(maxLength - 2))}`;
 }
 
 export function provideGutterDecorations(
@@ -152,14 +178,14 @@ export function provideGutterDecorations(
           decorations.push({
             line: handler.position.line,
             tooltip: fragmentPart
-              ? `Thymeleaf fragment: ${fragmentPart} in ${targetTemplate.name}.html`
-              : `Thymeleaf template: ${targetTemplate.name}.html`
+              ? `Thymeleaf fragment: ${fragmentPart} in ${compactTemplateName(targetTemplate.name)}.html`
+              : `Thymeleaf template: ${compactTemplateName(targetTemplate.name)}.html`
           });
         } else {
           const normalized = normalizeTemplateName(viewName);
           decorations.push({
             line: handler.position.line,
-            tooltip: `Missing Thymeleaf template: ${normalized}.html (click CodeLens or run Quick Fix to create)`
+            tooltip: `Missing Thymeleaf template: ${compactTemplateName(normalized)}.html (click CodeLens or run Quick Fix to create)`
           });
         }
       }
@@ -172,7 +198,7 @@ export function provideGutterDecorations(
     if (handlers.length > 0) {
       decorations.push({
         line: 0,
-        tooltip: `Spring Controllers: ${handlers.map((h) => `${h.ownerType}.${h.name}()`).join(", ")}`
+        tooltip: `Spring Controllers: ${handlers.map((h) => `${shortTypeName(h.ownerType)}.${h.name}()`).join(", ")}`
       });
     }
 

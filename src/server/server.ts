@@ -17,6 +17,7 @@ import {
   validateJavaDocument
 } from "./features/diagnosticsProvider";
 import { provideCompletions } from "./features/completionProvider";
+import { provideDocumentHighlights } from "./features/documentHighlightProvider";
 import {
   provideDefinition,
   provideHover,
@@ -59,6 +60,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       typeDefinitionProvider: true,
       referencesProvider: true,
+      documentHighlightProvider: true,
       hoverProvider: true,
       codeActionProvider: {
         codeActionKinds: [CodeActionKind.QuickFix, CodeActionKind.RefactorExtract]
@@ -162,6 +164,11 @@ connection.onHover(({ textDocument, position }) => {
 connection.onReferences(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
   return document ? provideReferences(document, position, projectIndex) : [];
+});
+
+connection.onDocumentHighlight(({ textDocument, position }) => {
+  const document = documents.get(textDocument.uri);
+  return document ? provideDocumentHighlights(document, position, projectIndex) : [];
 });
 
 connection.onRequest("thymeleaf/prepareRename", ({ textDocument, position }) => {
