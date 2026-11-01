@@ -116,6 +116,12 @@ With the Java language server active, external Java and JDK types are resolved t
 
 The Spring handler and model association still uses source-based analysis. Java source indexing is refreshed when files are saved; with VS Code Auto Save enabled, changes are indexed automatically as they are saved. Full compiler-grade analysis of Spring runtime behavior, complex generic bounds, dynamic mappings, overloaded methods, and complete SpEL is not yet supported. Ambiguous model attributes are left unresolved rather than assigned an arbitrary Java type. Message bundles support Java `.properties` separators, escaped keys/values, Unicode escapes, and continued lines.
 
+## What about Kotlin?
+
+Thymeleaf template features do not require Java sources: HTML and Thymeleaf editing features such as attribute completion, syntax highlighting, fragment navigation, and highlighting local template variables remain available in Kotlin-based projects.
+
+However, the extension's Spring and model index currently parses Java source files only, and its Java-backed integration uses the Java language server. In a Kotlin-only project, it therefore cannot index Kotlin controllers, routes, model attributes, or Kotlin model classes. Java-backed completion, navigation, hover, references, rename, and related diagnostics for those Kotlin declarations are not available; controller CodeLens and route navigation also require indexable Java controller sources. In mixed Java/Kotlin projects, Java declarations can still be indexed, but Kotlin declarations are not.
+
 ## Development
 
 ```sh

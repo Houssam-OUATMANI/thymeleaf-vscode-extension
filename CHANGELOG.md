@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 
 
+## [1.0.0] - 2026-11-01
+
+### Added
+
+- Add document highlighting for local Thymeleaf variables declared by `th:each`, `th:with`, and fragment parameters, including their uses in Thymeleaf expressions.
+- Support navigation and hover on members in composite SpEL expressions, including negation, boolean expressions, ternaries, and nested parentheses.
+- Return precise origin ranges for Go to Definition so Ctrl+Click highlights the complete referenced route, template, fragment, or expression target.
+
+### Improved
+
+- Refine controller and template CodeLens titles with short controller names and compact template paths.
+- Show a QuickPick when a template is linked to multiple Spring controller handlers instead of opening an arbitrary controller.
+- Validate and document Thymeleaf, Layout Dialect, and Spring Security syntax highlighting and snippets.
+
 ## [0.9.0] - 2026-10-27
 
 ### Added
