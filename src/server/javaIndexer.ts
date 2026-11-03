@@ -338,7 +338,7 @@ function parseJavaSource(
     }
 
     const hasLombokGetter = classAnnotations.some(({ name }) =>
-      name === "Data" || name === "Getter" || name === "Value"
+      name === "Data" || name === "Getter" || name === "Value" || name === "Builder"
     );
     if (hasLombokGetter) {
       for (const [propName, prop] of properties) {
@@ -593,12 +593,31 @@ function readClassMembers(tokens: readonly Token[], bodyStart: number, bodyEnd: 
     }
 
     if (token.text === ";" && parenDepth === 0 && bracketDepth === 0 && braceDepth === 1) {
-      const method = parseMethod(tokens, memberStart, index, index);
-      if (method) {
-        members.push(method);
-      } else {
+      let hasRootEquals = false;
+      let pD = 0;
+      let bD = 0;
+      for (let i = memberStart; i < index; i++) {
+        if (tokens[i].text === "(") pD++;
+        else if (tokens[i].text === ")") pD--;
+        else if (tokens[i].text === "[") bD++;
+        else if (tokens[i].text === "]") bD--;
+        else if (tokens[i].text === "=" && pD === 0 && bD === 0) {
+          hasRootEquals = true;
+          break;
+        }
+      }
+
+      if (hasRootEquals) {
         const field = parseField(tokens, memberStart, index);
         if (field) members.push(field);
+      } else {
+        const method = parseMethod(tokens, memberStart, index, index);
+        if (method) {
+          members.push(method);
+        } else {
+          const field = parseField(tokens, memberStart, index);
+          if (field) members.push(field);
+        }
       }
       memberStart = index + 1;
     }
@@ -644,7 +663,22 @@ function parseMethod(
       tokens[index - 2]?.text !== "@" &&
       findDeclaredType(tokens, memberStart, index - 1)
     ) {
-      openParen = index;
+      let hasRootEquals = false;
+      let pD = 0;
+      let bD = 0;
+      for (let i = memberStart; i < index; i++) {
+        if (tokens[i].text === "(") pD++;
+        else if (tokens[i].text === ")") pD--;
+        else if (tokens[i].text === "[") bD++;
+        else if (tokens[i].text === "]") bD--;
+        else if (tokens[i].text === "=" && pD === 0 && bD === 0) {
+          hasRootEquals = true;
+          break;
+        }
+      }
+      if (!hasRootEquals) {
+        openParen = index;
+      }
     }
   }
   if (openParen < 1 || tokens[openParen - 1].kind !== "identifier") return undefined;
