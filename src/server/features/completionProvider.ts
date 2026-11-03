@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
   CompletionItem,
   CompletionItemKind,
+  InsertTextFormat,
   Position,
   Range,
   TextDocument,
@@ -87,28 +88,56 @@ export function provideCompletions(
       })));
   }
 
-  const routeContext = findRouteContext(linePrefix);
+  const lineStartOffset = document.offsetAt(Position.create(position.line, 0));
+  const routeContext = findRouteCompletionContext(linePrefix, lineStartOffset);
   if (routeContext !== undefined) {
+    const { routePrefix, startOffset, isInsideAtExpr } = routeContext;
+    const replaceRange = Range.create(document.positionAt(startOffset), position);
+    const lowerPrefix = routePrefix.toLowerCase();
+
+    const matchesRoute = (r: string) => {
+      const lower = r.toLowerCase();
+      return lowerPrefix === "/" || lower.startsWith(lowerPrefix);
+    };
+
     const routeItems = index.controllerHandlers
       .flatMap(({ routePaths }) => routePaths)
-      .filter((route) => route.startsWith(routeContext))
       .filter((route, routeIndex, routes) => routes.indexOf(route) === routeIndex)
-      .map((route) => ({
-        label: route,
-        kind: CompletionItemKind.Reference,
-        detail: "Spring controller route",
-        insertText: route
-      }));
+      .filter(matchesRoute)
+      .map((route) => {
+        const snippet = generateRouteSnippet(route);
+        const insertText = isInsideAtExpr ? snippet.insertText : `@{${snippet.insertText}}`;
+        return {
+          label: route,
+          kind: CompletionItemKind.Reference,
+          detail: snippet.hasParams ? "Spring route with parameters" : "Spring controller route",
+          documentation: snippet.hasParams
+            ? `Dynamic route with parameters:\n\`${insertText}\``
+            : `Spring controller route: \`${route}\``,
+          insertText,
+          textEdit: TextEdit.replace(replaceRange, insertText),
+          insertTextFormat: snippet.isSnippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
+          sortText: `0000_0_${route}`
+        };
+      });
+
     const staticItems = index.staticFilePaths
-      .filter((route) => route.startsWith(routeContext))
-      .map((route) => ({
-        label: route,
-        kind: CompletionItemKind.File,
-        detail: "Static asset",
-        insertText: route
-      }));
+      .filter(matchesRoute)
+      .map((staticPath) => {
+        const insertText = isInsideAtExpr ? staticPath : `@{${staticPath}}`;
+        return {
+          label: staticPath,
+          kind: CompletionItemKind.File,
+          detail: "Static asset",
+          insertText,
+          textEdit: TextEdit.replace(replaceRange, insertText),
+          sortText: `0000_1_${staticPath}`
+        };
+      });
+
     return prioritizeThymeleaf([...routeItems, ...staticItems]);
   }
+
 
   const execMatch = /(#[a-zA-Z]+)\.([a-zA-Z]*)$/.exec(linePrefix);
   if (execMatch) {
@@ -535,13 +564,80 @@ function findFragmentContext(
   };
 }
 
-function findRouteContext(linePrefix: string): string | undefined {
-  const marker = linePrefix.lastIndexOf("@{/");
-  if (marker < 0) return undefined;
-  const routePrefix = linePrefix.slice(marker + 3);
-  if (routePrefix.includes("}") || routePrefix.includes("(")) return undefined;
-  return routePrefix;
+interface RouteContextInfo {
+  readonly routePrefix: string;
+  readonly startOffset: number;
+  readonly isInsideAtExpr: boolean;
 }
+
+function findRouteCompletionContext(
+  linePrefix: string,
+  lineStartOffset: number
+): RouteContextInfo | undefined {
+  const atMarker = linePrefix.lastIndexOf("@{");
+  if (atMarker >= 0) {
+    const afterAt = linePrefix.slice(atMarker + 2);
+    if (!afterAt.includes("(")) {
+      let braceDepth = 1;
+      let closed = false;
+      for (let i = 0; i < afterAt.length; i++) {
+        if (afterAt[i] === "{") braceDepth++;
+        else if (afterAt[i] === "}") {
+          braceDepth--;
+          if (braceDepth === 0) {
+            closed = true;
+            break;
+          }
+        }
+      }
+      if (!closed) {
+        const routePrefix = afterAt.startsWith("/") ? afterAt : "/" + afterAt;
+        return {
+          routePrefix,
+          startOffset: lineStartOffset + atMarker + 2,
+          isInsideAtExpr: true
+        };
+      }
+    }
+  }
+
+  // Also support URL attributes where user started typing a slash: th:href="/", th:action="/"
+  const attrMatch = /(?:th:href|th:action|th:src|th:formaction)\s*=\s*["']([^"']*)$/.exec(linePrefix);
+  if (attrMatch) {
+    const typed = attrMatch[1];
+    if (typed.startsWith("/")) {
+      return {
+        routePrefix: typed,
+        startOffset: lineStartOffset + linePrefix.length - typed.length,
+        isInsideAtExpr: false
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function generateRouteSnippet(route: string): { insertText: string; isSnippet: boolean; hasParams: boolean } {
+  const dynamicSegments = [...route.matchAll(/\{([a-zA-Z_$][\w$]*)\}/g)].map((m) => m[1]);
+  if (dynamicSegments.length === 0) {
+    return {
+      insertText: route,
+      isSnippet: false,
+      hasParams: false
+    };
+  }
+
+  const paramsList = dynamicSegments
+    .map((paramName, index) => paramName + "=\\${$" + (index + 1) + "}")
+    .join(", ");
+
+  return {
+    insertText: route + "(" + paramsList + ")",
+    isSnippet: true,
+    hasParams: true
+  };
+}
+
 
 function isInsideTag(text: string, offset: number): boolean {
   const prefix = text.slice(0, offset);

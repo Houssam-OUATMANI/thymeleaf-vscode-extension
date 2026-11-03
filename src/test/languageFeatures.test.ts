@@ -3443,3 +3443,139 @@ test("ctrl+click on static resource @{/css/bundle.css} provides full-path origin
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("resolves fields with initializers like createdAt = Instant.now() without false unknown property error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-field-init-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const entityPath = path.join(java, "Category.java");
+  const templatePath = path.join(templates, "category.html");
+
+  try {
+    await Promise.all([mkdir(java, { recursive: true }), mkdir(templates, { recursive: true })]);
+    await Promise.all([
+      writeFile(entityPath, `package demo;
+import java.time.Instant;
+import java.util.UUID;
+
+public class Category {
+    private UUID id;
+    private String name;
+    private Instant createdAt = Instant.now();
+}`),
+      writeFile(path.join(java, "CategoryController.java"), `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class CategoryController {
+    @GetMapping("/categories")
+    public String show(Model model) {
+        model.addAttribute("category", new Category());
+        return "category";
+    }
+}`),
+      writeFile(templatePath, `<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+  <td th:text="\${category.createdAt}"></td>
+</body>
+</html>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const templateContent = await readFile(templatePath, "utf-8");
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+
+    // 1. Diagnostics must NOT report "Property 'createdAt' was not found on model type 'Category'"
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+    const createdAtDiagnostics = diagnostics.filter((d) => d.message.includes("createdAt"));
+    assert.equal(createdAtDiagnostics.length, 0, "Should not report unknown property for createdAt");
+
+    // 2. Navigation to createdAt definition must succeed
+    const offset = templateContent.indexOf("createdAt");
+    const definition = provideDefinition(doc, doc.positionAt(offset + 2), index);
+    assert.ok(definition, "Should navigate to createdAt field definition in Category.java");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("completes route URLs without slash duplication and generates dynamic parameter snippets", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-route-completion-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "page.html");
+
+  try {
+    await Promise.all([mkdir(java, { recursive: true }), mkdir(templates, { recursive: true })]);
+    await Promise.all([
+      writeFile(path.join(java, "MyController.java"), `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.*;
+
+@Controller
+public class MyController {
+    @GetMapping("/categories")
+    public String list() { return "page"; }
+
+    @PostMapping("/categories/{id}/update")
+    public String update(@PathVariable String id) { return "page"; }
+
+    @GetMapping("/categories/{catId}/posts/{slug}")
+    public String postDetail(@PathVariable String catId, @PathVariable String slug) { return "page"; }
+}`),
+      writeFile(templatePath, `<html></html>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    // Test A: User typed "<a th:href="@{/" - slash must be replaced, not duplicated!
+    const templateA = `<a th:href="@{/`;
+    const docA = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateA);
+    const completionsA = provideCompletions(docA, docA.positionAt(templateA.length), index);
+
+    const updateItem = completionsA.find((c) => c.label === "/categories/{id}/update");
+    assert.ok(updateItem, "Should offer /categories/{id}/update completion");
+    assert.ok(updateItem.textEdit, "Should provide textEdit to replace existing slash and prevent '//'");
+
+    // Check that textEdit range replaces from start of route (covering the '/')
+    if (updateItem.textEdit && "range" in updateItem.textEdit) {
+      assert.equal(updateItem.textEdit.range.start.character, `<a th:href="@{`.length);
+      assert.equal(updateItem.textEdit.range.end.character, templateA.length);
+      // Snippet format check: should generate (id=${$1})
+      assert.equal(updateItem.textEdit.newText, "/categories/{id}/update(id=\\${$1})");
+      assert.equal(updateItem.insertTextFormat, 2, "Should be Snippet format");
+    }
+
+    // Test B: Route with multiple dynamic segments {catId} and {slug}
+    const multiSegmentItem = completionsA.find((c) => c.label === "/categories/{catId}/posts/{slug}");
+    assert.ok(multiSegmentItem, "Should offer multi-segment route");
+    if (multiSegmentItem?.textEdit && "range" in multiSegmentItem.textEdit) {
+      assert.equal(
+        multiSegmentItem.textEdit.newText,
+        "/categories/{catId}/posts/{slug}(catId=\\${$1}, slug=\\${$2})"
+      );
+    }
+
+    // Test C: Static/fixed route without parameters should not have ()
+    const fixedItem = completionsA.find((c) => c.label === "/categories");
+    assert.ok(fixedItem, "Should offer /categories");
+    if (fixedItem?.textEdit && "range" in fixedItem.textEdit) {
+      assert.equal(fixedItem.textEdit.newText, "/categories");
+    }
+
+    // Test D: User typed "<a th:href="@{/cat" - filtering works smoothly
+    const templateD = `<a th:href="@{/cat`;
+    const docD = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateD);
+    const completionsD = provideCompletions(docD, docD.positionAt(templateD.length), index);
+    assert.ok(completionsD.some((c) => c.label.startsWith("/categories")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
