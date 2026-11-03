@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 
 
+## [1.1.0] - 2026-11-03
+
+### Added
+
+- Recognize model attributes added through `Model.addAttribute` and `ModelAndView.addObject`, including attributes used in nested URL expressions such as `@{/categories/{id}/update(id=${categoryId})}`.
+- Complete model attribute names in nested Thymeleaf expressions and navigate to their controller declarations.
+- Complete Spring route URLs without duplicating slashes and insert snippets for dynamic route segments.
+
+### Improved
+
+- Infer Java model types from method calls and resolve fields initialized with factory methods such as `Instant.now()`.
+- Preserve model expression completion while typing an incomplete nested expression inside a link URL.
+
 ## [1.0.0] - 2026-11-01
 
 ### Added
