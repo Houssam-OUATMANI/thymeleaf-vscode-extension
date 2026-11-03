@@ -61,6 +61,7 @@ export interface ControllerHandler {
   readonly modelAttributes: ReadonlyMap<string, string>;
   readonly modelAttributePositions: ReadonlyMap<string, SourcePosition>;
   readonly modelAttributeExpressions: ReadonlyMap<string, { readonly expression: string; readonly position: SourcePosition }>;
+  readonly localTypes?: ReadonlyMap<string, string>;
   readonly ownerType: string;
 }
 
@@ -510,6 +511,10 @@ function parseJavaSource(
         modelAttributes,
         modelAttributePositions,
         modelAttributeExpressions,
+        localTypes: new Map([
+          ...member.parameters.map((p) => [p.name, p.typeName] as [string, string]),
+          ...Array.from(member.localVariables.entries()).map(([k, v]) => [k, v.typeName] as [string, string])
+        ]),
         ownerType: qualifiedName
       });
     }
@@ -1243,9 +1248,6 @@ export function inferModelExpressionType(
     if (returnType) return returnType;
   }
 
-  const owner = classesByName.get(handler.ownerType);
-  if (!owner) return undefined;
-
   let tokenIndex = 0;
   if (tokens[tokenIndex]?.text === "this" && tokens[tokenIndex + 1]?.text === ".") {
     tokenIndex += 2;
@@ -1254,8 +1256,11 @@ export function inferModelExpressionType(
   if (!root || root.kind !== "identifier") return undefined;
   tokenIndex += 1;
 
-  let typeName = owner.properties.get(root.text)?.typeName
-    ?? resolveMethodReturnType(owner.qualifiedName, root.text, classesByName);
+  const owner = classesByName.get(handler.ownerType);
+  let typeName = handler.localTypes?.get(root.text)
+    ?? handler.modelAttributes.get(root.text)
+    ?? owner?.properties.get(root.text)?.typeName
+    ?? (owner ? resolveMethodReturnType(owner.qualifiedName, root.text, classesByName) : undefined);
   if (!typeName) return undefined;
 
   while (tokenIndex < tokens.length) {

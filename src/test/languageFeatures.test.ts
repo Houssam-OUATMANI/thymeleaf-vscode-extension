@@ -3579,3 +3579,75 @@ public class MyController {
   }
 });
 
+test("recognizes model attribute added via model.addAttribute('categoryId', category.getId()) in form action and completions", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-category-id-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "form.html");
+
+  try {
+    await Promise.all([mkdir(java, { recursive: true }), mkdir(templates, { recursive: true })]);
+    await Promise.all([
+      writeFile(path.join(java, "Category.java"), `package demo;
+import java.util.UUID;
+public class Category {
+    private UUID id;
+    public UUID getId() { return id; }
+}`),
+      writeFile(path.join(java, "CategoryDto.java"), `package demo;
+public class CategoryDto {
+    private String name;
+    public String getName() { return name; }
+}`),
+      writeFile(path.join(java, "CategoryController.java"), `package demo;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class CategoryController {
+    @GetMapping("/categories/{id}/update")
+    public String editForm(Category category, Model model) {
+        model.addAttribute("categoryId", category.getId());
+        model.addAttribute("categoryDto", new CategoryDto());
+        return "form";
+    }
+}`),
+      writeFile(templatePath, `<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+  <form th:action="@{/categories/{id}/update(id=\${categoryId}) }" method="post" th:object="\${categoryDto}" >
+  </form>
+</body>
+</html>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+
+    const templateContent = await readFile(templatePath, "utf-8");
+    const doc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, templateContent);
+
+    // 1. Diagnostics must NOT complain that 'categoryId' is undefined
+    const diagnostics = validateDocument(doc, index, DEFAULT_SETTINGS);
+    const categoryIdErrors = diagnostics.filter((d) => d.message.includes("categoryId"));
+    assert.equal(categoryIdErrors.length, 0, "Variable 'categoryId' should be recognized without warning");
+
+    // 2. Autocompletion inside ${ca|} should propose 'categoryId'
+    const completionHtml = `<form th:action="@{/categories/{id}/update(id=\${ca`;
+    const compDoc = TextDocument.create(pathToFileURL(templatePath).toString(), "html", 1, completionHtml);
+    const completions = provideCompletions(compDoc, compDoc.positionAt(completionHtml.length), index);
+    const categoryIdItem = completions.find((c) => c.label === "categoryId");
+    assert.ok(categoryIdItem, "Completions should propose 'categoryId'");
+    assert.equal(categoryIdItem.detail, "UUID", "Inferred type for categoryId should be UUID");
+
+    // 3. Go to definition on 'categoryId' should navigate to the controller line
+    const catIdOffset = templateContent.indexOf("categoryId");
+    const definition = provideDefinition(doc, doc.positionAt(catIdOffset + 2), index);
+    assert.ok(definition, "Should navigate to 'categoryId' definition in CategoryController.java");
+    assert.ok(definition.uri.includes("CategoryController.java"), "Definition URI should point to CategoryController");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

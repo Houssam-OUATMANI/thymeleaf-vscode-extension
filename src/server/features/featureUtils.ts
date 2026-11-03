@@ -576,6 +576,10 @@ export function resolveModelPath(
     rawTypeName = "java.lang.Object";
   }
 
+  if (!rawTypeName && prefix === "$" && index.modelAttributeDefinitionsForTemplate(templateName, templateUri).has(rootName)) {
+    rawTypeName = "java.lang.Object";
+  }
+
   if (!rawTypeName) {
     if (prefix === "$" && !SPEL_KEYWORDS.has(rootName) && rootName !== "T") {
       return {
@@ -848,13 +852,30 @@ export function findEnclosingExpression(
       matches.push(expression);
     }
   }
+  const nestedOpen = Math.max(text.lastIndexOf("${", offset), text.lastIndexOf("*{", offset));
+  if (
+    nestedOpen >= 0 &&
+    !text.slice(nestedOpen, offset).includes("}") &&
+    !matches.some((expression) => expression.start === nestedOpen)
+  ) {
+    const enclosingExpression = matches.find((expression) =>
+      expression.start < nestedOpen && expression.end >= offset
+    );
+    if (enclosingExpression) {
+      return {
+        prefix: text[nestedOpen],
+        body: text.slice(nestedOpen + 2, offset),
+        start: nestedOpen,
+        end: offset
+      };
+    }
+  }
   if (matches.length > 0) {
     matches.sort((a, b) => (a.end - a.start) - (b.end - b.start));
     return matches[0];
   }
-  const open = Math.max(text.lastIndexOf("${", offset), text.lastIndexOf("*{", offset));
-  if (open >= 0 && !text.slice(open, offset).includes("}")) {
-    return { prefix: text[open], body: text.slice(open + 2, offset), start: open, end: offset };
+  if (nestedOpen >= 0 && !text.slice(nestedOpen, offset).includes("}")) {
+    return { prefix: text[nestedOpen], body: text.slice(nestedOpen + 2, offset), start: nestedOpen, end: offset };
   }
   return undefined;
 }

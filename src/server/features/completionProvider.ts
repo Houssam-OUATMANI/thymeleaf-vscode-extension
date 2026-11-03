@@ -241,6 +241,11 @@ export function provideCompletions(
     for (const v of loopVars) {
       modelAttributes.set(v.name, v.typeName);
     }
+    for (const [name] of index.modelAttributeDefinitionsForTemplate(modelNameContext.templateName, document.uri)) {
+      if (!modelAttributes.has(name)) {
+        modelAttributes.set(name, "java.lang.Object");
+      }
+    }
 
     const items: CompletionItem[] = [...modelAttributes]
       .filter(([name]) => name.startsWith(modelNameContext.prefix))
