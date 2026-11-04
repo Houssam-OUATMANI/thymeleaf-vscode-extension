@@ -109,7 +109,12 @@ export function provideDefinition(
       const fragment = fragmentPart
         ? targetTemplate.fragments.find(({ name }) => name === fragmentPart)
         : undefined;
-      return locationAt(targetTemplate.uri, fragment ? fragment.position : Position.create(0, 0));
+      const originRange = rangeAtOffset(text, ...javaString.range);
+      return locationAt(
+        targetTemplate.uri,
+        fragment ? fragment.position : Position.create(0, 0),
+        originRange
+      );
     }
     return undefined;
   }
@@ -1191,7 +1196,11 @@ function findRouteReference(
 function findJavaStringAt(
   text: string,
   offset: number
-): { kind: "view" | "route" | "modelAttribute"; value: string } | undefined {
+): {
+  kind: "view" | "route" | "modelAttribute";
+  value: string;
+  range: [number, number];
+} | undefined {
   const stringPattern = /(["'])(.*?)\1/g;
   for (const match of text.matchAll(stringPattern)) {
     if (match.index === undefined) continue;
@@ -1203,13 +1212,13 @@ function findJavaStringAt(
       (/return\s*$/.test(prefix) && !/redirect:|forward:/.test(match[2] ?? "")) ||
       /(?:setViewName|new\s+ModelAndView)\s*\([^)]*$/.test(prefix)
     ) {
-      return { kind: "view", value: match[2] ?? "" };
+      return { kind: "view", value: match[2] ?? "", range: [valueStart, valueEnd] };
     }
     if (/@(?:Request|Get|Post|Put|Patch|Delete)?Mapping\s*\([^)]*$/.test(prefix)) {
-      return { kind: "route", value: match[2] ?? "" };
+      return { kind: "route", value: match[2] ?? "", range: [valueStart, valueEnd] };
     }
     if (/@ModelAttribute\s*\([^)]*$/.test(prefix) || /addAttribute\s*\([^,]*$/.test(prefix)) {
-      return { kind: "modelAttribute", value: match[2] ?? "" };
+      return { kind: "modelAttribute", value: match[2] ?? "", range: [valueStart, valueEnd] };
     }
   }
 

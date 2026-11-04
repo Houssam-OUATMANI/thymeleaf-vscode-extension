@@ -2,7 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
 
+### Improved
+
+- Use Java Language Server inferred types for local variables declared with `var`, preserving concrete generic arguments in Thymeleaf model diagnostics and completions.
+- Highlight the complete Java controller view name when navigating to its Thymeleaf template.
+
+### Added
+
+- Complete indexed Spring routes and the official `redirect:` and `forward:` navigation prefixes in Java controller view strings.
 
 ## [1.1.0] - 2026-11-03
 

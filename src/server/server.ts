@@ -4,6 +4,7 @@ import {
   DidChangeConfigurationNotification,
   InitializeParams,
   InitializeResult,
+  Position,
   ProposedFeatures,
   TextDocuments,
   TextDocumentSyncKind
@@ -16,7 +17,10 @@ import {
   validateDocument,
   validateJavaDocument
 } from "./features/diagnosticsProvider";
-import { provideCompletions } from "./features/completionProvider";
+import {
+  provideCompletions,
+  provideJavaNavigationCompletions
+} from "./features/completionProvider";
 import { provideDocumentHighlights } from "./features/documentHighlightProvider";
 import {
   provideDefinition,
@@ -33,6 +37,7 @@ import {
 } from "./features/semanticTokensProvider";
 import { provideCodeLenses, provideGutterDecorations } from "./features/codeLensProvider";
 import { CompilerJavaType, ProjectIndex } from "./projectIndex";
+import { JavaInferredVariableType } from "./javaIndexer";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -42,6 +47,7 @@ let workspaceUris: string[] = [];
 let settings: ThymeleafSettings = DEFAULT_SETTINGS;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshQueue: Promise<void> = Promise.resolve();
+let javaVariableReferenceVersion = 0;
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
   workspaceUris = (params.workspaceFolders ?? [])
@@ -55,7 +61,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: {
-        triggerCharacters: [" ", ":", "{", "$", "*", "#", "@", "~", "."]
+        triggerCharacters: [" ", ":", "/", "{", "$", "*", "#", "@", "~", "."]
       },
       definitionProvider: true,
       typeDefinitionProvider: true,
@@ -143,8 +149,27 @@ connection.onDidChangeWatchedFiles(() => scheduleIndexRefresh());
 
 connection.onCompletion(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
-  return document ? provideCompletions(document, position, projectIndex) : [];
+  return document && document.languageId !== "java"
+    ? provideCompletions(document, position, projectIndex)
+    : [];
 });
+
+connection.onRequest(
+  "thymeleaf/javaNavigationCompletions",
+  (params: {
+    readonly textDocument: { readonly uri: string };
+    readonly position: { readonly line: number; readonly character: number };
+  }) => {
+    const document = documents.get(params.textDocument.uri);
+    return document
+      ? provideJavaNavigationCompletions(
+          document,
+          Position.create(params.position.line, params.position.character),
+          projectIndex
+        ) ?? []
+      : [];
+  }
+);
 
 connection.onDefinition(({ textDocument, position }) => {
   const document = documents.get(textDocument.uri);
@@ -206,6 +231,15 @@ connection.onNotification("thymeleaf/resetJavaCompilerTypes", () => {
   projectIndex.clearCompilerJavaTypes();
 });
 
+connection.onNotification(
+  "thymeleaf/javaInferredVariables",
+  (params: { readonly version: number; readonly types: readonly JavaInferredVariableType[] }) => {
+    if (params.version !== javaVariableReferenceVersion) return;
+    projectIndex.addInferredJavaVariableTypes(params.types);
+    publishAllDiagnostics();
+  }
+);
+
 connection.onCodeAction(({ textDocument, range, context }) => {
   const document = documents.get(textDocument.uri);
   return document ? provideCodeActions(document, range, context.diagnostics, projectIndex) : [];
@@ -245,6 +279,13 @@ function refreshProjectIndex(): Promise<void> {
     connection.sendNotification(
       "thymeleaf/javaTypeReferences",
       projectIndex.javaTypeReferences
+    );
+    connection.sendNotification(
+      "thymeleaf/javaVariableReferences",
+      {
+        version: ++javaVariableReferenceVersion,
+        references: projectIndex.javaVariableReferences
+      }
     );
     publishAllDiagnostics();
   });

@@ -39,6 +39,9 @@ export function provideCompletions(
   const offset = document.offsetAt(position);
   const linePrefix = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
 
+  const javaNavigationCompletions = provideJavaNavigationCompletions(document, position, index);
+  if (javaNavigationCompletions) return javaNavigationCompletions;
+
   const messageContext = findMessageKeyContext(linePrefix);
   if (messageContext !== undefined) {
     return prioritizeThymeleaf(index.getAllMessageProperties()
@@ -449,6 +452,99 @@ export function provideCompletions(
     return prioritizeThymeleaf(items);
   }
   return [];
+}
+
+export function provideJavaNavigationCompletions(
+  document: TextDocument,
+  position: Position,
+  index: ProjectIndex
+): CompletionItem[] | undefined {
+  if (document.languageId !== "java") return undefined;
+  const text = document.getText();
+  const offset = document.offsetAt(position);
+  const linePrefix = text.slice(text.lastIndexOf("\n", offset - 1) + 1, offset);
+  const navigationContext = findJavaNavigationCompletionContext(linePrefix, position);
+  if (!navigationContext) return undefined;
+
+  const { prefix } = navigationContext;
+  if (prefix === undefined) {
+    return [
+      {
+        label: "redirect:",
+        kind: CompletionItemKind.Keyword,
+        detail: "Spring MVC redirect view prefix",
+        documentation: "Redirects the response to a URL.",
+        textEdit: TextEdit.replace(navigationContext.replaceRange, "redirect:")
+      },
+      {
+        label: "forward:",
+        kind: CompletionItemKind.Keyword,
+        detail: "Spring MVC forward view prefix",
+        documentation: "Forwards the request to a URL on the server.",
+        textEdit: TextEdit.replace(navigationContext.replaceRange, "forward:")
+      }
+    ];
+  }
+
+  const routes = [...new Set(index.controllerHandlers.flatMap(({ routePaths }) => routePaths))]
+    .filter((route) =>
+      navigationContext.routePrefix === "/" ||
+      route.toLowerCase().startsWith(navigationContext.routePrefix.toLowerCase())
+    );
+  return routes.map((route) => ({
+    label: `${prefix}${route}`,
+    kind: CompletionItemKind.Reference,
+    detail: "Spring controller route",
+    documentation: `Spring MVC ${prefix.slice(0, -1)} to route \`${route}\`.`,
+    textEdit: TextEdit.replace(navigationContext.replaceRange, route),
+    sortText: `0000_${route}`
+  }));
+}
+
+interface JavaNavigationCompletionContext {
+  readonly prefix: string | undefined;
+  readonly routePrefix: string;
+  readonly replaceRange: Range;
+}
+
+function findJavaNavigationCompletionContext(
+  linePrefix: string,
+  position: Position
+): JavaNavigationCompletionContext | undefined {
+  const stringStart = linePrefix.lastIndexOf('"');
+  if (stringStart < 0 || linePrefix.slice(stringStart + 1).includes('"')) return undefined;
+  const beforeString = linePrefix.slice(0, stringStart);
+  if (!/(?:\breturn\s*|\b(?:new\s+ModelAndView|setViewName)\s*\([^)]*)$/.test(beforeString)) {
+    return undefined;
+  }
+
+  const value = linePrefix.slice(stringStart + 1);
+  const fullValueRange = Range.create(
+    position.line,
+    stringStart + 1,
+    position.line,
+    position.character
+  );
+  const prefixes = ["redirect:", "forward:"] as const;
+  const matchingPrefix = prefixes.find((prefix) => value.startsWith(prefix));
+  if (matchingPrefix) {
+    const routePrefix = value.slice(matchingPrefix.length);
+    return {
+      prefix: matchingPrefix,
+      routePrefix: routePrefix.startsWith("/") ? routePrefix : `/${routePrefix}`,
+      replaceRange: Range.create(
+        position.line,
+        stringStart + 1 + matchingPrefix.length,
+        position.line,
+        position.character
+      )
+    };
+  }
+
+  if (prefixes.some((prefix) => prefix.startsWith(value))) {
+    return { prefix: undefined, routePrefix: "", replaceRange: fullValueRange };
+  }
+  return undefined;
 }
 
 function findSelectionPropertyContext(

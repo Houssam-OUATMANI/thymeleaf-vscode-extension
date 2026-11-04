@@ -1,7 +1,12 @@
 import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 import { CompilerJavaType } from "../server/projectIndex";
-import { JavaTypeReference } from "../server/javaIndexer";
+import {
+  JavaInferredVariableType,
+  JavaTypeReference,
+  JavaVariableReference
+} from "../server/javaIndexer";
+import { parseJavaVariableTypeFromHover } from "../javaTypeUtils";
 
 interface JavaExtensionApi {
   readonly status: string;
@@ -61,6 +66,23 @@ interface CompilerResolutionStats {
   resolutionErrors: number;
 }
 
+interface JavaVariableReferenceBatch {
+  readonly version: number;
+  readonly references: readonly JavaVariableReference[];
+}
+
+interface JavaNavigationCompletion {
+  readonly label: string;
+  readonly kind?: number;
+  readonly detail?: string;
+  readonly documentation?: string;
+  readonly sortText?: string;
+  readonly textEdit?: {
+    readonly range: ProtocolRange;
+    readonly newText: string;
+  };
+}
+
 const NON_RESOLVABLE_TYPES = new Set([
   "boolean", "byte", "char", "short", "int", "long", "float", "double", "void"
 ]);
@@ -81,10 +103,13 @@ export function registerJavaSupport(
   let javaApiPromise: Promise<JavaExtensionApi | undefined> | undefined;
   let classpathReport: Promise<void> | undefined;
   let latestReferences: readonly JavaTypeReference[] = [];
+  let latestVariableReferences: readonly JavaVariableReference[] = [];
+  let latestVariableReferenceVersion = 0;
   const resolvedHierarchies = new Map<
     string,
     readonly { readonly reference: JavaTypeReference; readonly type: CompilerJavaType }[]
   >();
+  const inferredVariableTypes = new Map<string, string>();
   const invalidateDocumentTypes = (uri: vscode.Uri): void => {
     if (!/\.java$/i.test(uri.fsPath)) return;
     const prefix = `${uri.toString()}:`;
@@ -93,6 +118,9 @@ export function registerJavaSupport(
       if (key.startsWith(prefix) || hierarchy.some(({ type }) => type.uri === changedUri)) {
         resolvedHierarchies.delete(key);
       }
+    }
+    for (const key of inferredVariableTypes.keys()) {
+      if (key.startsWith(prefix)) inferredVariableTypes.delete(key);
     }
   };
 
@@ -106,7 +134,59 @@ export function registerJavaSupport(
       });
     }
   );
-  context.subscriptions.push(typeReferenceRegistration);
+  const variableReferenceRegistration = client.onNotification(
+    "thymeleaf/javaVariableReferences",
+    ({ version, references }: JavaVariableReferenceBatch) => {
+      latestVariableReferences = references;
+      latestVariableReferenceVersion = version;
+      void resolveInferredVariables(references, version).catch((error: unknown) => {
+        output.appendLine(`Java local-variable type inference failed: ${formatError(error)}`);
+      });
+    }
+  );
+  context.subscriptions.push(typeReferenceRegistration, variableReferenceRegistration);
+  context.subscriptions.push(
+    vscode.languages.registerCompletionItemProvider(
+      { language: "java", scheme: "file" },
+      {
+        provideCompletionItems: async (document, position, token) => {
+          if (!isJavaNavigationCompletionContext(document, position)) return [];
+          const items = await client.sendRequest<readonly JavaNavigationCompletion[]>(
+            "thymeleaf/javaNavigationCompletions",
+            {
+              textDocument: { uri: document.uri.toString() },
+              position: { line: position.line, character: position.character }
+            },
+            token
+          );
+          return items.map((item) => {
+            const completion = new vscode.CompletionItem(
+              item.label,
+              item.label === "redirect:" || item.label === "forward:"
+                ? vscode.CompletionItemKind.Keyword
+                : vscode.CompletionItemKind.Reference
+            );
+            completion.detail = item.detail;
+            completion.documentation = item.documentation;
+            completion.sortText = item.sortText;
+            if (item.textEdit) {
+              const range = protocolRange(item.textEdit.range);
+              completion.textEdit = vscode.TextEdit.replace(range, item.textEdit.newText);
+              completion.filterText = item.textEdit.newText
+                .replace(/^\/+/, "")
+                .split("/")
+                .at(-1);
+            }
+            return completion;
+          });
+        }
+      },
+      "r",
+      "f",
+      ":",
+      "/"
+    )
+  );
   context.subscriptions.push(
     fileWatcher.onDidChange(invalidateDocumentTypes),
     fileWatcher.onDidCreate(invalidateDocumentTypes),
@@ -221,26 +301,40 @@ export function registerJavaSupport(
       }
       context.subscriptions.push(api.onDidClasspathUpdate(() => {
         resolvedHierarchies.clear();
+        inferredVariableTypes.clear();
         classpathReport = undefined;
         void (async () => {
           await client.sendNotification("thymeleaf/resetJavaCompilerTypes");
           await resolveCompilerTypes(latestReferences);
+          await resolveInferredVariables(
+            latestVariableReferences,
+            latestVariableReferenceVersion
+          );
         })().catch((error: unknown) => {
           output.appendLine(`Java classpath refresh failed: ${formatError(error)}`);
         });
       }));
       context.subscriptions.push(api.onDidProjectsImport(() => {
         resolvedHierarchies.clear();
+        inferredVariableTypes.clear();
         classpathReport = undefined;
         void (async () => {
           await client.sendNotification("thymeleaf/resetJavaCompilerTypes");
           await resolveCompilerTypes(latestReferences);
+          await resolveInferredVariables(
+            latestVariableReferences,
+            latestVariableReferenceVersion
+          );
         })().catch((error: unknown) => {
           output.appendLine(`Java project import refresh failed: ${formatError(error)}`);
         });
       }));
       await reportJavaClasspaths(api);
       await resolveCompilerTypes(latestReferences);
+      await resolveInferredVariables(
+        latestVariableReferences,
+        latestVariableReferenceVersion
+      );
     })
     .catch((error: unknown) => {
       output.appendLine(`Unable to initialize Java compiler integration: ${formatError(error)}`);
@@ -261,6 +355,98 @@ export function registerJavaSupport(
         : undefined;
     })();
     return javaApiPromise;
+  }
+
+  async function resolveInferredVariables(
+    references: readonly JavaVariableReference[],
+    version: number
+  ): Promise<void> {
+    if (references.length === 0) return;
+    const api = await loadJavaApi();
+    if (!api || !(await api.serverReady())) return;
+
+    const inferred: JavaInferredVariableType[] = [];
+    await runWithConcurrency(references, 6, async (reference) => {
+      const key = variableReferenceKey(reference);
+      const cachedType = inferredVariableTypes.get(key);
+      if (cachedType) {
+        inferred.push({ ...reference, typeName: cachedType });
+        return;
+      }
+      try {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(reference.uri));
+        const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+          "vscode.executeHoverProvider",
+          document.uri,
+          new vscode.Position(reference.position.line, reference.position.character)
+        );
+        const typeName = hovers
+          ?.map((hover) => parseJavaVariableTypeFromHover(
+            hover.contents.map((content) =>
+              typeof content === "string" ? content : content.value
+            ),
+            reference.name
+          ))
+          .find((type): type is string => type !== undefined);
+        if (typeName) {
+          inferredVariableTypes.set(key, typeName);
+          inferred.push({ ...reference, typeName });
+        }
+      } catch (error) {
+        output.appendLine(
+          `Could not infer Java type for '${reference.name}' in ${reference.uri}: ${formatError(error)}`
+        );
+      }
+    });
+
+    if (inferred.length > 0) {
+      const compilerTypes = new Map<string, CompilerJavaType>();
+      for (const reference of inferred) {
+        try {
+          const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(reference.uri));
+          const position = new vscode.Position(reference.position.line, reference.position.character);
+          const definitions = normalizeDefinitions(await vscode.commands.executeCommand<unknown>(
+            "vscode.executeTypeDefinitionProvider",
+            document.uri,
+            position
+          ));
+          if (definitions.length !== 1) continue;
+
+          const [definition] = definitions;
+          if (!definition) continue;
+          const definitionPosition = definition.range.start;
+          const typeReference: JavaTypeReference = {
+            uri: definition.uri.toString(),
+            position: { line: definitionPosition.line, character: definitionPosition.character },
+            typeName: reference.typeName
+          };
+          const key = typeReferenceKey(typeReference);
+          let hierarchy = resolvedHierarchies.get(key);
+          if (!hierarchy) {
+            hierarchy = await resolveCompilerTypeHierarchy(
+              api,
+              typeReference,
+              { definitionMisses: 0, symbolMisses: 0, typeSymbolMisses: 0, resolutionErrors: 0 },
+              new Set(),
+              0,
+              definition
+            );
+            resolvedHierarchies.set(key, hierarchy);
+          }
+          for (const { type } of hierarchy) {
+            compilerTypes.set(`${type.uri}:${type.name}:${type.alias}`, type);
+          }
+        } catch (error) {
+          output.appendLine(
+            `Could not resolve compiler symbols for inferred type '${reference.typeName}': ${formatError(error)}`
+          );
+        }
+      }
+      if (compilerTypes.size > 0) {
+        await client.sendNotification("thymeleaf/javaCompilerTypes", [...compilerTypes.values()]);
+      }
+      await client.sendNotification("thymeleaf/javaInferredVariables", { version, types: inferred });
+    }
   }
 
   async function reportJavaClasspaths(api: JavaExtensionApi): Promise<void> {
@@ -359,13 +545,14 @@ async function resolveCompilerTypeHierarchy(
   reference: JavaTypeReference,
   stats: CompilerResolutionStats,
   visited = new Set<string>(),
-  depth = 0
+  depth = 0,
+  definitionOverride?: vscode.Location
 ): Promise<{ readonly reference: JavaTypeReference; readonly type: CompilerJavaType }[]> {
   const key = typeReferenceKey(reference);
   if (visited.has(key) || depth >= 12) return [];
   visited.add(key);
 
-  const type = await resolveCompilerType(api, reference, stats);
+  const type = await resolveCompilerType(api, reference, stats, definitionOverride);
   if (!type) return [];
   const resolved = [{ reference, type }];
   if (!type.superTypeNames?.length) return resolved;
@@ -440,12 +627,15 @@ async function documentFromUri(uri: vscode.Uri): Promise<vscode.TextDocument> {
 async function resolveCompilerType(
   api: JavaExtensionApi,
   reference: JavaTypeReference,
-  stats: CompilerResolutionStats
+  stats: CompilerResolutionStats,
+  definitionOverride?: vscode.Location
 ): Promise<CompilerJavaType | undefined> {
-  const definitions = normalizeDefinitions(await api.goToDefinition({
-    textDocument: { uri: reference.uri },
-    position: reference.position
-  }));
+  const definitions = definitionOverride
+    ? [definitionOverride]
+    : normalizeDefinitions(await api.goToDefinition({
+        textDocument: { uri: reference.uri },
+        position: reference.position
+      }));
   if (definitions.length !== 1) {
     stats.definitionMisses += 1;
     return undefined;
@@ -768,6 +958,24 @@ function readCompilerTypeParameters(declaration: string): string[] | undefined {
 
 function typeReferenceKey(reference: JavaTypeReference): string {
   return `${reference.uri}:${reference.position.line}:${reference.position.character}:${reference.typeName}`;
+}
+
+function isJavaNavigationCompletionContext(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): boolean {
+  const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
+  const match = /(?:\breturn\s*|\b(?:new\s+ModelAndView|setViewName)\s*\([^)]*)["']([^"']*)$/
+    .exec(linePrefix);
+  const value = match?.[1];
+  if (!value) return false;
+  return ["redirect:", "forward:"].some((prefix) =>
+    prefix.startsWith(value) || value.startsWith(prefix)
+  );
+}
+
+function variableReferenceKey(reference: JavaVariableReference): string {
+  return `${reference.uri}:${reference.position.line}:${reference.position.character}:${reference.name}`;
 }
 
 function protocolRange(range: ProtocolRange): vscode.Range {

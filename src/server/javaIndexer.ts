@@ -42,6 +42,16 @@ export interface JavaTypeReference {
   readonly typeName: string;
 }
 
+export interface JavaVariableReference {
+  readonly uri: string;
+  readonly position: SourcePosition;
+  readonly name: string;
+}
+
+export interface JavaInferredVariableType extends JavaVariableReference {
+  readonly typeName: string;
+}
+
 export interface SpringBeanInfo {
   readonly name: string;
   readonly typeName: string;
@@ -60,8 +70,13 @@ export interface ControllerHandler {
   readonly position: SourcePosition;
   readonly modelAttributes: ReadonlyMap<string, string>;
   readonly modelAttributePositions: ReadonlyMap<string, SourcePosition>;
-  readonly modelAttributeExpressions: ReadonlyMap<string, { readonly expression: string; readonly position: SourcePosition }>;
+  readonly modelAttributeExpressions: ReadonlyMap<string, {
+    readonly expression: string;
+    readonly position: SourcePosition;
+    readonly localVariableName?: string;
+  }>;
   readonly localTypes?: ReadonlyMap<string, string>;
+  readonly localVariablePositions?: ReadonlyMap<string, SourcePosition>;
   readonly ownerType: string;
 }
 
@@ -164,8 +179,13 @@ export function indexJavaSources(
   const resolvedHandlers = handlers.map((handler) => {
     const modelAttributes = new Map(handler.modelAttributes);
     for (const [attributeName, modelExpression] of handler.modelAttributeExpressions) {
-      const typeName = inferModelExpressionType(modelExpression.expression, handler, classesByName);
-      if (typeName) modelAttributes.set(attributeName, typeName);
+    const localType = modelExpression.localVariableName
+      ? handler.localTypes?.get(modelExpression.localVariableName)
+      : undefined;
+    const typeName = localType && localType !== "var"
+      ? localType
+      : inferModelExpressionType(modelExpression.expression, handler, classesByName);
+    if (typeName) modelAttributes.set(attributeName, typeName);
     }
     const modelAttributePositions = new Map(handler.modelAttributePositions);
     for (const [attributeName, modelExpression] of handler.modelAttributeExpressions) {
@@ -432,7 +452,7 @@ function parseJavaSource(
       const modelAttributePositions = new Map(classModelAttributePositions);
       const modelAttributeExpressions = new Map<
         string,
-        { expression: string; position: SourcePosition }
+        { expression: string; position: SourcePosition; localVariableName?: string }
       >();
 
       for (const parameter of member.parameters) {
@@ -470,7 +490,8 @@ function parseJavaSource(
         }
         modelAttributeExpressions.set(key, {
           expression: local?.expression ?? variableName,
-          position: positionAt(source, tokens[attributeNameTokenIndex].start + 1)
+          position: positionAt(source, tokens[attributeNameTokenIndex].start + 1),
+          ...(local && { localVariableName: variableName })
         });
       }
 
@@ -515,6 +536,12 @@ function parseJavaSource(
           ...member.parameters.map((p) => [p.name, p.typeName] as [string, string]),
           ...Array.from(member.localVariables.entries()).map(([k, v]) => [k, v.typeName] as [string, string])
         ]),
+        localVariablePositions: new Map(
+          [...member.localVariablePositions].map(([name, tokenIndex]) => [
+            name,
+            positionAt(source, tokens[tokenIndex].start)
+          ])
+        ),
         ownerType: qualifiedName
       });
     }
@@ -553,6 +580,7 @@ type ClassMember =
         readonly tokenIndex: number;
         readonly typeReferences: readonly { readonly typeName: string; readonly tokenIndex: number }[];
       }>;
+      readonly localVariablePositions: ReadonlyMap<string, number>;
       readonly modelAttributeName: string | undefined;
       readonly addedModelVariables: readonly [string, string, number][];
       readonly viewName: string | undefined;
@@ -703,6 +731,12 @@ function parseMethod(
     ? tokens.slice(methodBodyStart + 1, bodyEnd)
     : [];
   const localVariables = findLocalVariables(methodBody);
+  const localVariablePositions = new Map(
+    [...localVariables].map(([name, variable]) => [
+      name,
+      methodBodyStart + 1 + variable.tokenIndex
+    ])
+  );
   const typeReferences = [
     ...getTypeReferencesInRange(tokens, returnTypeInfo.startTokenIndex, nameTokenIndex),
     ...parameters.flatMap(({ typeReferences: refs }) => refs),
@@ -735,6 +769,7 @@ function parseMethod(
     annotations,
     parameters,
     localVariables,
+    localVariablePositions,
     modelAttributeName: modelAnnotation?.stringArguments[0] ?? (modelAnnotation ? name : undefined),
     addedModelVariables,
     viewName,

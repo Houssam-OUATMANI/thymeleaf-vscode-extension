@@ -356,8 +356,75 @@ test("navigates between controller routes, views, and template links", async () 
     );
     assert.ok(viewDefinition);
     assert.equal(viewDefinition.uri, fixture.templateUri);
+    assert.ok("originSelectionRange" in viewDefinition);
+    assert.deepEqual(viewDefinition.originSelectionRange, {
+      start: controllerDocument.positionAt(viewOffset),
+      end: controllerDocument.positionAt(viewOffset + "users/list".length)
+    });
   } finally {
     await fixture.dispose();
+  }
+});
+
+test("completes Spring redirect and forward prefixes with indexed controller routes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-view-prefix-completion-"));
+  const javaRoot = path.join(root, "src", "main", "java", "demo");
+  const controller = `package demo;
+@Controller class NavigationController {
+  @GetMapping("/categories")
+  String categories() { return "redirect:/cat"; }
+  @GetMapping("/users")
+  String users() { return "forward:"; }
+  String partialPrefix() { return "red"; }
+}`;
+
+  try {
+    await mkdir(javaRoot, { recursive: true });
+    const controllerPath = path.join(javaRoot, "NavigationController.java");
+    await writeFile(controllerPath, controller);
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const document = TextDocument.create(
+      pathToFileURL(controllerPath).toString(),
+      "java",
+      1,
+      controller
+    );
+
+    const redirectOffset = controller.indexOf("redirect:/cat") + "redirect:/cat".length;
+    const redirectCompletions = provideCompletions(
+      document,
+      document.positionAt(redirectOffset),
+      index
+    );
+    const redirect = redirectCompletions.find(({ label }) => label === "redirect:/categories");
+    assert.ok(redirect);
+    assert.ok(redirect.textEdit && "range" in redirect.textEdit);
+    assert.equal(document.getText(redirect.textEdit.range), "/cat");
+    assert.equal(redirect.textEdit.newText, "/categories");
+
+    const forwardOffset = controller.indexOf('return "forward:') + 'return "forward:'.length;
+    const forwardCompletions = provideCompletions(
+      document,
+      document.positionAt(forwardOffset),
+      index
+    );
+    assert.ok(forwardCompletions.some(({ label }) => label === "forward:/categories"));
+    assert.ok(forwardCompletions.some(({ label }) => label === "forward:/users"));
+
+    const partialOffset = controller.indexOf('"red') + '"red'.length;
+    const prefixCompletions = provideCompletions(
+      document,
+      document.positionAt(partialOffset),
+      index
+    );
+    const redirectPrefix = prefixCompletions.find(({ label }) => label === "redirect:");
+    assert.ok(redirectPrefix);
+    assert.ok(redirectPrefix.textEdit && "range" in redirectPrefix.textEdit);
+    assert.equal(document.getText(redirectPrefix.textEdit.range), "red");
+    assert.equal(redirectPrefix.textEdit.newText, "redirect:");
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -792,6 +859,109 @@ test("uses compiler-resolved classpath symbols for Thymeleaf model completion", 
     assert.ok(collectionCompletions.some(({ label }) => label === "displayName"));
     index.clearCompilerJavaTypes();
     assert.equal(index.modelAttributesForTemplate("remote").has("remoteRows"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("uses Java-inferred var types for generic repository model attributes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-var-inference-"));
+  const templateRoot = path.join(root, "src", "main", "resources", "templates");
+  const javaRoot = path.join(root, "src", "main", "java", "demo");
+  const templatePath = path.join(templateRoot, "categories.html");
+  const template = `<ul th:each="category : \${categories.content}">
+  <li th:text="\${category.id}"></li>
+</ul>
+<a th:disabled="\${categories.hasNext()}"></a>`;
+
+  try {
+    await Promise.all([
+      mkdir(templateRoot, { recursive: true }),
+      mkdir(javaRoot, { recursive: true })
+    ]);
+    await Promise.all([
+      writeFile(templatePath, template),
+      writeFile(path.join(javaRoot, "CategoryController.java"), `package demo;
+@Controller class CategoryController {
+  private CategoryRepository categoryRepository;
+  String list(Model model, Pageable pagination) {
+    Page<Category> explicit = categoryRepository.findAll(pagination);
+    var inferred = categoryRepository.findAll(pagination);
+    model.addAttribute("explicit", explicit);
+    model.addAttribute("categories", inferred);
+    return "categories";
+  }
+}`),
+      writeFile(path.join(javaRoot, "CategoryRepository.java"), `package demo;
+interface CategoryRepository extends PagingRepository<Category> {}
+interface PagingRepository<T> {
+  <S extends T> Page<S> findAll(Pageable pageable);
+}
+class Page<T> { java.util.List<T> content; }
+class Category { Long id; }`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    const handler = index.controllerHandlers.find(({ name }) => name === "list");
+    const templateUri = pathToFileURL(templatePath).toString();
+    const document = TextDocument.create(templateUri, "html", 1, template);
+    const initialDiagnostics = validateDocument(document, index, DEFAULT_SETTINGS);
+
+    assert.equal(handler?.modelAttributes.get("explicit"), "Page<Category>");
+    assert.equal(handler?.modelAttributes.get("categories"), "Page<S>");
+    assert.ok(initialDiagnostics.some(({ message }) => message.includes("model type 'S'")));
+
+    const [reference] = index.javaVariableReferences.filter(({ name }) => name === "inferred");
+    assert.ok(reference);
+    index.addInferredJavaVariableTypes([{ ...reference, typeName: "Page<Category>" }]);
+
+    const resolvedHandler = index.controllerHandlers.find(({ name }) => name === "list");
+    assert.equal(resolvedHandler?.modelAttributes.get("categories"), "Page<Category>");
+    assert.equal(
+      index.modelAttributesForTemplate("categories", templateUri).get("categories"),
+      resolvedHandler?.modelAttributes.get("explicit")
+    );
+    assert.deepEqual(
+      validateDocument(document, index, DEFAULT_SETTINGS)
+        .filter(({ code }) => code === "unknown-model-property"),
+      []
+    );
+
+    const sliceUri = "jdt://contents/spring-data/Slice.class";
+    index.addCompilerJavaTypes([{
+      alias: "Page",
+      name: "Page",
+      uri: "jdt://contents/spring-data/Page.class",
+      position: { line: 0, character: 10 },
+      typeParameters: ["T"],
+      superTypeNames: ["Slice<T>"],
+      properties: [],
+      methods: []
+    }, {
+      alias: "Slice",
+      name: "Slice",
+      uri: sliceUri,
+      position: { line: 0, character: 10 },
+      typeParameters: ["T"],
+      properties: [],
+      methods: [{
+        name: "hasNext",
+        returnType: "boolean",
+        position: { line: 12, character: 15 },
+        parameterCount: 0
+      }]
+    }]);
+
+    const hasNextOffset = template.indexOf("hasNext");
+    const hasNextDefinition = provideDefinition(
+      document,
+      document.positionAt(hasNextOffset + 2),
+      index
+    );
+    assert.ok(hasNextDefinition);
+    assert.equal(hasNextDefinition.uri, sliceUri);
+    assert.equal(hasNextDefinition.range.start.line, 12);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -3650,4 +3820,3 @@ public class CategoryController {
     await rm(root, { recursive: true, force: true });
   }
 });
-

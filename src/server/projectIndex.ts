@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ControllerHandler,
+  JavaInferredVariableType,
+  JavaVariableReference,
   inferModelExpressionType,
   indexJavaSources,
   JavaClass,
@@ -95,6 +97,7 @@ export class ProjectIndex {
   private globalModelAttributes = new Map<string, string>();
   private globalModelAttributePositions = new Map<string, { readonly uri: string; readonly position: SourcePosition }>();
   private springBeansByName = new Map<string, SpringBeanInfo>();
+  private inferredVariableTypes = new Map<string, string>();
   private javaSourceCache = new Map<string, { readonly content: string; readonly parsed: ParsedJavaSource }>();
   private templateCache = new Map<string, { readonly content: string; readonly template: IndexedTemplate }>();
   private propertiesCache = new Map<string, { readonly content: string; readonly properties: readonly IndexedMessageProperty[] }>();
@@ -115,6 +118,30 @@ export class ProjectIndex {
 
   public get javaTypeReferences(): readonly JavaTypeReference[] {
     return this.typeReferences;
+  }
+
+  public get javaVariableReferences(): readonly JavaVariableReference[] {
+    return this.sourceHandlers.flatMap((handler) => {
+      const modelVariables = new Set(
+        [...handler.modelAttributeExpressions.values()]
+          .map(({ localVariableName }) => localVariableName)
+          .filter((name): name is string => name !== undefined)
+      );
+      return [...(handler.localVariablePositions ?? [])]
+        .filter(([name]) => modelVariables.has(name) && handler.localTypes?.get(name) === "var")
+        .map(([name, position]) => ({ uri: handler.uri, name, position }));
+    });
+  }
+
+  public addInferredJavaVariableTypes(types: readonly JavaInferredVariableType[]): void {
+    const currentReferences = new Set(this.javaVariableReferences.map(variableReferenceKey));
+    for (const { uri, position, name, typeName } of types) {
+      const reference = { uri, position, name };
+      if (currentReferences.has(variableReferenceKey(reference)) && typeName.trim()) {
+        this.inferredVariableTypes.set(variableReferenceKey(reference), typeName);
+      }
+    }
+    this.refreshHandlerModelTypes();
   }
 
   public addCompilerJavaTypes(types: readonly CompilerJavaType[]): void {
@@ -210,7 +237,7 @@ export class ProjectIndex {
   public clearCompilerJavaTypes(): void {
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
-    this.handlers = this.sourceHandlers;
+    this.refreshHandlerModelTypes();
   }
 
   public async refresh(
@@ -330,6 +357,7 @@ export class ProjectIndex {
     this.sourceHandlers = javaIndexes.flatMap(({ handlers }) => handlers);
     this.handlers = this.sourceHandlers;
     this.typeReferences = javaIndexes.flatMap(({ typeReferences }) => typeReferences);
+    this.inferredVariableTypes.clear();
     this.compilerTypes.clear();
     this.ambiguousCompilerAliases.clear();
     this.staticFiles = staticFiles;
@@ -599,11 +627,24 @@ export class ProjectIndex {
     }
     this.handlers = this.sourceHandlers.map((handler) => {
       const modelAttributes = new Map(handler.modelAttributes);
+      const localTypes = new Map(handler.localTypes);
+      for (const [name, position] of handler.localVariablePositions ?? []) {
+        const typeName = this.inferredVariableTypes.get(
+          variableReferenceKey({ uri: handler.uri, position, name })
+        );
+        if (typeName) localTypes.set(name, typeName);
+      }
+      const resolvedHandler = { ...handler, localTypes };
       for (const [attributeName, modelExpression] of handler.modelAttributeExpressions) {
-        const typeName = inferModelExpressionType(modelExpression.expression, handler, classesByName);
+        const localType = modelExpression.localVariableName
+          ? localTypes.get(modelExpression.localVariableName)
+          : undefined;
+        const typeName = localType && localType !== "var"
+          ? localType
+          : inferModelExpressionType(modelExpression.expression, resolvedHandler, classesByName);
         if (typeName) modelAttributes.set(attributeName, typeName);
       }
-      return { ...handler, modelAttributes };
+      return { ...resolvedHandler, modelAttributes };
     });
   }
 
@@ -835,6 +876,11 @@ function escapeRegExp(value: string): string {
 
 function toPosix(value: string): string {
   return value.split(path.sep).join("/");
+}
+
+function variableReferenceKey(reference: JavaVariableReference): string {
+  const { uri, position, name } = reference;
+  return `${uri}:${position.line}:${position.character}:${name}`;
 }
 
 function getterPropertyName(methodName: string, returnType: string): string | undefined {
