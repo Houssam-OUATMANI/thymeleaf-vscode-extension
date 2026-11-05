@@ -428,6 +428,68 @@ test("completes Spring redirect and forward prefixes with indexed controller rou
   }
 });
 
+test("completes routes declared in Spring Security configuration", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-security-route-completion-"));
+  const java = path.join(root, "src", "main", "java", "demo");
+  const templates = path.join(root, "src", "main", "resources", "templates");
+  const templatePath = path.join(templates, "login.html");
+
+  try {
+    await Promise.all([mkdir(java, { recursive: true }), mkdir(templates, { recursive: true })]);
+    await Promise.all([
+      writeFile(path.join(java, "SecurityConfig.java"), `package demo;
+@Configuration class SecurityConfig {
+  @Bean SecurityFilterChain filterChain(HttpSecurity http) {
+    http.formLogin(form -> form.loginPage("/login").loginProcessingUrl("/authenticate"));
+    http.logout(logout -> logout.logoutUrl("/logout"));
+    return http.build();
+  }
+}`),
+      writeFile(templatePath, `<form th:action="@{/auth"></form>`)
+    ]);
+
+    const index = new ProjectIndex();
+    await index.refresh([pathToFileURL(root).toString()]);
+    assert.ok(index.hasRoute("/authenticate"));
+
+    const template = `<form th:action="@{/auth`;
+    const templateDocument = TextDocument.create(
+      pathToFileURL(templatePath).toString(),
+      "html",
+      1,
+      template
+    );
+    const templateCompletions = provideCompletions(
+      templateDocument,
+      templateDocument.positionAt(template.length),
+      index
+    );
+    assert.ok(templateCompletions.some(({ label, detail }) =>
+      label === "/authenticate" && detail === "Spring Security route"
+    ));
+
+    const javaContent = `class Navigation {
+  String login() { return "redirect:/log"; }
+}`;
+    const javaDocument = TextDocument.create(
+      pathToFileURL(path.join(java, "Navigation.java")).toString(),
+      "java",
+      1,
+      javaContent
+    );
+    const javaCompletions = provideCompletions(
+      javaDocument,
+      javaDocument.positionAt(javaContent.indexOf("redirect:/log") + "redirect:/log".length),
+      index
+    );
+    assert.ok(javaCompletions.some(({ label, detail }) =>
+      label === "redirect:/logout" && detail === "Spring Security route"
+    ));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("does not choose an arbitrary model type when multiple handlers share a view", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "thymeleaf-ambiguous-model-"));
   const templates = path.join(root, "src", "main", "resources", "templates");

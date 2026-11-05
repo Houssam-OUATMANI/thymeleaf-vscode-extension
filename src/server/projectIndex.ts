@@ -90,6 +90,7 @@ export class ProjectIndex {
   private messagesByKey = new Map<string, IndexedMessageProperty[]>();
   private sourceHandlers: readonly ControllerHandler[] = [];
   private handlers: readonly ControllerHandler[] = [];
+  private securityRoutes: readonly string[] = [];
   private typeReferences: readonly JavaTypeReference[] = [];
   private compilerTypes = new Map<string, JavaClass>();
   private ambiguousCompilerAliases = new Set<string>();
@@ -356,6 +357,7 @@ export class ProjectIndex {
     this.messagesByKey = messagesByKey;
     this.sourceHandlers = javaIndexes.flatMap(({ handlers }) => handlers);
     this.handlers = this.sourceHandlers;
+    this.securityRoutes = [...new Set(javaIndexes.flatMap(({ securityRoutes }) => securityRoutes))];
     this.typeReferences = javaIndexes.flatMap(({ typeReferences }) => typeReferences);
     this.inferredVariableTypes.clear();
     this.compilerTypes.clear();
@@ -445,6 +447,15 @@ export class ProjectIndex {
     return this.handlers.filter(({ routePaths }) =>
       routePaths.some((candidate) => routeMatches(candidate, routePath))
     );
+  }
+
+  public hasRoute(routePath: string): boolean {
+    return this.findHandlersForRoute(routePath).length > 0 ||
+      this.securityRoutes.some((candidate) => routeMatches(candidate, routePath));
+  }
+
+  public get securityRoutePaths(): readonly string[] {
+    return this.securityRoutes;
   }
 
   public findClass(typeName: string): JavaClass | undefined {

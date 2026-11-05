@@ -38,7 +38,7 @@ Start with Thymeleaf attributes and utility objects, then complete properties an
 
 ### Templates, fragments, and routes
 
-Complete template and fragment references in HTML, route paths in Thymeleaf URLs, and registered Spring routes after `redirect:` or `forward:` in Java view names.
+Complete template and fragment references in HTML, controller and Spring Security routes in Thymeleaf URLs, and registered Spring routes after `redirect:` or `forward:` in Java view names.
 
 <table>
   <tr>
@@ -81,14 +81,14 @@ Find common mistakes as you edit and apply a suggested correction without interr
 - **Java types:** fields, getters, record components, collection element properties, and methods inherited from indexed classes and interfaces.
 - **Spring Beans:** complete bean references such as `@orderService` and their properties in SpEL expressions.
 - **Templates and fragments:** template paths, fragment names, Layout Dialect references, and fragment parameters.
-- **Spring routes:** registered controller paths in `@{...}` URLs and the official Spring MVC `redirect:` and `forward:` prefixes in Java controller view strings.
+- **Spring routes:** registered controller and Spring Security paths in `@{...}` URLs and the official Spring MVC `redirect:` and `forward:` prefixes in Java view strings.
 - **Messages:** message keys from Java `.properties` bundles.
 - **Spring Security:** `sec:*` and `data-sec-*` attributes, including expression and attribute-value suggestions.
 - **Editing details:** completion can start after whitespace when adding a `th:*` attribute, and partial attribute prefixes are replaced precisely.
 
 ### Java-backed model intelligence
 
-The extension indexes Java Spring MVC controllers and makes their model available to the associated templates. It recognizes common `@Controller` and `@RestController` mappings, static view names, model attributes from `Model.addAttribute`, `ModelAndView.addObject`, `@ModelAttribute`, and Java fields, getters, and record components. Global model attributes from `@ControllerAdvice` are also available.
+The extension indexes Java Spring MVC controllers and makes their model available to the associated templates. It recognizes common `@Controller` and `@RestController` mappings, Spring Security URL configuration such as login and logout endpoints, static view names, model attributes from `Model.addAttribute`, `ModelAndView.addObject`, `@ModelAttribute`, and Java fields, getters, and record components. Global model attributes from `@ControllerAdvice` are also available.
 
 Model values initialized from service or repository calls can contribute their inferred Java type. This includes supported chained calls, common collection factories, literals, resolvable static factory methods, and local variables declared with `var`. When the Java language server can provide compiler-inferred types, `var` retains concrete generic types such as `Page<Category>` so expressions like `${categories.content}` and `${category.id}` can be analyzed against the actual model rather than an unresolved generic placeholder.
 

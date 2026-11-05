@@ -103,20 +103,27 @@ export function provideCompletions(
       return lowerPrefix === "/" || lower.startsWith(lowerPrefix);
     };
 
-    const routeItems = index.controllerHandlers
-      .flatMap(({ routePaths }) => routePaths)
-      .filter((route, routeIndex, routes) => routes.indexOf(route) === routeIndex)
+    const securityRoutes = new Set(index.securityRoutePaths);
+    const routeItems = [...new Set([
+      ...index.controllerHandlers.flatMap(({ routePaths }) => routePaths),
+      ...index.securityRoutePaths
+    ])]
       .filter(matchesRoute)
       .map((route) => {
         const snippet = generateRouteSnippet(route);
         const insertText = isInsideAtExpr ? snippet.insertText : `@{${snippet.insertText}}`;
+        const isSecurityRoute = securityRoutes.has(route);
         return {
           label: route,
           kind: CompletionItemKind.Reference,
-          detail: snippet.hasParams ? "Spring route with parameters" : "Spring controller route",
+          detail: snippet.hasParams
+            ? "Spring route with parameters"
+            : isSecurityRoute
+              ? "Spring Security route"
+              : "Spring controller route",
           documentation: snippet.hasParams
             ? `Dynamic route with parameters:\n\`${insertText}\``
-            : `Spring controller route: \`${route}\``,
+            : `Spring ${isSecurityRoute ? "Security" : "controller"} route: \`${route}\``,
           insertText,
           textEdit: TextEdit.replace(replaceRange, insertText),
           insertTextFormat: snippet.isSnippet ? InsertTextFormat.Snippet : InsertTextFormat.PlainText,
@@ -486,7 +493,11 @@ export function provideJavaNavigationCompletions(
     ];
   }
 
-  const routes = [...new Set(index.controllerHandlers.flatMap(({ routePaths }) => routePaths))]
+  const securityRoutes = new Set(index.securityRoutePaths);
+  const routes = [...new Set([
+    ...index.controllerHandlers.flatMap(({ routePaths }) => routePaths),
+    ...index.securityRoutePaths
+  ])]
     .filter((route) =>
       navigationContext.routePrefix === "/" ||
       route.toLowerCase().startsWith(navigationContext.routePrefix.toLowerCase())
@@ -494,8 +505,8 @@ export function provideJavaNavigationCompletions(
   return routes.map((route) => ({
     label: `${prefix}${route}`,
     kind: CompletionItemKind.Reference,
-    detail: "Spring controller route",
-    documentation: `Spring MVC ${prefix.slice(0, -1)} to route \`${route}\`.`,
+    detail: securityRoutes.has(route) ? "Spring Security route" : "Spring controller route",
+    documentation: `Spring ${securityRoutes.has(route) ? "Security" : "MVC"} ${prefix.slice(0, -1)} to route \`${route}\`.`,
     textEdit: TextEdit.replace(navigationContext.replaceRange, route),
     sortText: `0000_${route}`
   }));

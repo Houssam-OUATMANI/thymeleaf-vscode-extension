@@ -183,7 +183,7 @@ export function validateDocument(
         routeValue.includes("+") ||
         routeValue.includes("'") ||
         (attribute.name === "th:href" && !isNavigationalHref(text, attribute.valueStart)) ||
-        index.findHandlersForRoute(routeValue).length > 0 ||
+        index.hasRoute(routeValue) ||
         index.findStaticFile(routeValue) !== undefined
       ) continue;
       diagnostics.push({

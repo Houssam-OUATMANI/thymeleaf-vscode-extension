@@ -42,6 +42,39 @@ test("indexes Spring routes, view names, model attributes, and Java properties",
   assert.equal(userForm?.properties.get("displayName")?.typeName, "String");
 });
 
+test("indexes URL endpoints declared by Spring Security configuration", () => {
+  const index = indexJavaSources(new Map([
+    ["C:/project/src/main/java/demo/SecurityConfig.java", `
+      @Configuration
+      class SecurityConfig {
+        @Bean
+        SecurityFilterChain filterChain(HttpSecurity http) {
+          http.formLogin(form -> form
+            .loginPage("/login")
+            .loginProcessingUrl("/authenticate")
+            .defaultSuccessUrl("/dashboard"));
+          http.logout(logout -> logout
+            .logoutUrl("/logout")
+            .logoutSuccessUrl("/signed-out"));
+          return http.build();
+        }
+      }
+
+      class OtherConfig {
+        String loginPage() { return "/not-a-security-route"; }
+      }
+    `]
+  ]));
+
+  assert.deepEqual(index.securityRoutes, [
+    "/login",
+    "/authenticate",
+    "/dashboard",
+    "/logout",
+    "/signed-out"
+  ]);
+});
+
 test("ignores Java comments when finding mappings and model properties", () => {
   const index = indexJavaSources(new Map([
     ["C:/project/src/main/java/demo/PageController.java", `

@@ -83,6 +83,7 @@ export interface ControllerHandler {
 export interface JavaSourceIndex {
   readonly classes: readonly JavaClass[];
   readonly handlers: readonly ControllerHandler[];
+  readonly securityRoutes: readonly string[];
   readonly typeReferences: readonly JavaTypeReference[];
   readonly globalModelAttributes: ReadonlyMap<string, string>;
   readonly globalModelAttributePositions: ReadonlyMap<string, { readonly uri: string; readonly position: SourcePosition }>;
@@ -127,10 +128,24 @@ const REQUEST_MAPPINGS = new Set([
   "PatchMapping",
   "DeleteMapping"
 ]);
+const SECURITY_ROUTE_METHODS = new Set([
+  "loginPage",
+  "loginProcessingUrl",
+  "defaultSuccessUrl",
+  "successForwardUrl",
+  "failureUrl",
+  "failureForwardUrl",
+  "logoutUrl",
+  "logoutSuccessUrl",
+  "accessDeniedPage",
+  "invalidSessionUrl",
+  "expiredUrl"
+]);
 
 export interface ParsedJavaSource {
   readonly classes: readonly JavaClass[];
   readonly handlers: readonly ControllerHandler[];
+  readonly securityRoutes: readonly string[];
   readonly typeReferences: readonly JavaTypeReference[];
   readonly globalModelAttributes: ReadonlyMap<string, string>;
   readonly globalModelAttributePositions: ReadonlyMap<string, { readonly uri: string; readonly position: SourcePosition }>;
@@ -143,6 +158,7 @@ export function indexJavaSources(
 ): JavaSourceIndex {
   const classes: JavaClass[] = [];
   const handlers: ControllerHandler[] = [];
+  const securityRoutes: string[] = [];
   const typeReferences: JavaTypeReference[] = [];
   const globalModelAttributes = new Map<string, string>();
   const globalModelAttributePositions = new Map<string, { uri: string; position: SourcePosition }>();
@@ -158,6 +174,7 @@ export function indexJavaSources(
     const parsed = cached.parsed;
     classes.push(...parsed.classes);
     handlers.push(...parsed.handlers);
+    securityRoutes.push(...parsed.securityRoutes);
     typeReferences.push(...parsed.typeReferences);
     for (const [name, type] of parsed.globalModelAttributes) globalModelAttributes.set(name, type);
     for (const [name, pos] of parsed.globalModelAttributePositions) globalModelAttributePositions.set(name, pos);
@@ -197,6 +214,7 @@ export function indexJavaSources(
   return {
     classes,
     handlers: resolvedHandlers,
+    securityRoutes,
     typeReferences,
     globalModelAttributes,
     globalModelAttributePositions,
@@ -210,6 +228,7 @@ function parseJavaSource(
 ): {
   classes: JavaClass[];
   handlers: ControllerHandler[];
+  securityRoutes: string[];
   typeReferences: JavaTypeReference[];
   globalModelAttributes: Map<string, string>;
   globalModelAttributePositions: Map<string, { uri: string; position: SourcePosition }>;
@@ -220,6 +239,7 @@ function parseJavaSource(
   const uri = pathToFileURL(filePath).toString();
   const classes: JavaClass[] = [];
   const handlers: ControllerHandler[] = [];
+  const securityRoutes: string[] = [];
   const typeReferences: JavaTypeReference[] = [];
   const globalModelAttributes = new Map<string, string>();
   const globalModelAttributePositions = new Map<string, { uri: string; position: SourcePosition }>();
@@ -271,6 +291,14 @@ function parseJavaSource(
     const superTypeNames = readSuperTypeNames(tokens, index + 2, bodyStart);
 
     const classMembers = readClassMembers(tokens, bodyStart, bodyEnd);
+    if (
+      classAnnotations.some(({ name }) => name === "Configuration" || name === "EnableWebSecurity") ||
+      classMembers.some((member) =>
+        member.kind === "method" && member.returnType.split(".").at(-1) === "SecurityFilterChain"
+      )
+    ) {
+      securityRoutes.push(...readSecurityRoutes(tokens, bodyStart, bodyEnd));
+    }
     const properties = new Map<string, JavaProperty>();
     const methodReturnTypes = new Map<string, string>();
     const methodCandidates = new Map<string, JavaProperty[]>();
@@ -551,11 +579,34 @@ function parseJavaSource(
   return {
     classes,
     handlers,
+    securityRoutes,
     typeReferences,
     globalModelAttributes,
     globalModelAttributePositions,
     springBeans
   };
+}
+
+function readSecurityRoutes(tokens: readonly Token[], start: number, end: number): string[] {
+  const routes: string[] = [];
+  for (let index = start + 1; index < end; index += 1) {
+    const methodName = tokens[index];
+    if (
+      methodName.kind !== "identifier" ||
+      (!SECURITY_ROUTE_METHODS.has(methodName.text) && !/(?:Url|Page|Uri|Path)$/.test(methodName.text)) ||
+      tokens[index + 1]?.text !== "("
+    ) {
+      continue;
+    }
+
+    const openParen = index + 1;
+    const closeParen = findMatching(tokens, openParen, "(", ")");
+    const argument = tokens[openParen + 1];
+    if (closeParen > openParen && argument?.kind === "string" && argument.text.startsWith("/")) {
+      routes.push(argument.text.trim());
+    }
+  }
+  return routes;
 }
 
 type ClassMember =
